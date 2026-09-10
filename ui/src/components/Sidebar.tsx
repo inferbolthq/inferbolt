@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Briefcase, BarChart2, Cpu, Sparkles, TerminalSquare } from 'lucide-react'
+import { LayoutDashboard, Briefcase, BarChart2, Cpu, Sparkles, TerminalSquare, LogOut } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { healthApi } from '../api/client'
+import { healthApi, clearApiKey } from '../api/client'
 import { MonoLabel, Ping } from './ui'
 import clsx from 'clsx'
 
@@ -58,11 +58,21 @@ export default function Sidebar() {
         ))}
       </ul>
 
-      <div className="flex items-center gap-space-xs px-space-sm py-space-xs mt-space-lg rounded-xl bg-surface-container-low">
-        <Ping tone={connected ? 'success' : 'error'} />
-        <MonoLabel className={connected ? 'text-secondary' : 'text-error'}>
-          {connected ? 'Connected' : 'Offline'}
-        </MonoLabel>
+      <div className="flex items-center justify-between gap-space-xs px-space-sm py-space-xs mt-space-lg rounded-xl bg-surface-container-low">
+        <span className="flex items-center gap-space-xs">
+          <Ping tone={connected ? 'success' : 'error'} />
+          <MonoLabel className={connected ? 'text-secondary' : 'text-error'}>
+            {connected ? 'Connected' : 'Offline'}
+          </MonoLabel>
+        </span>
+        <button
+          aria-label="Forget API token"
+          title="Forget API token"
+          onClick={() => { clearApiKey(); window.location.reload() }}
+          className="text-outline hover:text-error transition-colors"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+        </button>
       </div>
     </nav>
   )

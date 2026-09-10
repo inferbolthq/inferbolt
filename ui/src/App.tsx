@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Sidebar from './components/Sidebar'
+import TokenGate from './components/TokenGate'
 import Dashboard from './pages/Dashboard'
 import JobDetail from './pages/JobDetail'
 import Metrics from './pages/Metrics'
@@ -19,6 +20,7 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <TokenGate>
       <BrowserRouter>
         <div className="flex h-screen bg-background text-on-surface font-body-md text-body-md">
           <Sidebar />
@@ -33,6 +35,7 @@ export default function App() {
           </main>
         </div>
       </BrowserRouter>
+      </TokenGate>
     </QueryClientProvider>
   )
 }

@@ -1,14 +1,55 @@
 import axios from 'axios'
 
+export const API_KEY_STORAGE_KEY = 'inferbolt_api_key'
+
+/** Fired when the gateway rejects the stored token, so the UI can ask again. */
+export const AUTH_FAILED_EVENT = 'inferbolt:auth-failed'
+
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8080',
 })
 
+function readApiKey(): string | null {
+  try {
+    return localStorage.getItem(API_KEY_STORAGE_KEY)
+  } catch {
+    return null // private mode, or storage blocked
+  }
+}
+
+export function setApiKey(token: string) {
+  try {
+    localStorage.setItem(API_KEY_STORAGE_KEY, token)
+  } catch {
+    // Non-persistent is still usable for this tab; the interceptor re-reads
+    // each request and will simply find nothing next time.
+  }
+}
+
+export function clearApiKey() {
+  try {
+    localStorage.removeItem(API_KEY_STORAGE_KEY)
+  } catch { /* nothing to clear */ }
+}
+
 api.interceptors.request.use(config => {
-  const key = localStorage.getItem('inferbolt_api_key')
+  const key = readApiKey()
   if (key) config.headers.Authorization = `Bearer ${key}`
   return config
 })
+
+// A rejected token should send the user back to the prompt. Without this every
+// panel just reads "failed to load", which says nothing about the cause.
+api.interceptors.response.use(
+  response => response,
+  error => {
+    if (error?.response?.status === 401) {
+      clearApiKey()
+      window.dispatchEvent(new Event(AUTH_FAILED_EVENT))
+    }
+    return Promise.reject(error)
+  },
+)
 
 export interface Job {
   id: string

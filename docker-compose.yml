@@ -55,6 +55,8 @@ services:
       JWT_SECRET: change-me-in-production-this-is-dev-only-not-for-real-use
       PORT: 8080
       ENV: development
+      # the Vite dev server, so `cd ui && npm run dev` can reach the API
+      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
       # dev API key bootstrapped here on first startup; read by `inferbolt run`
       DEV_TOKEN_FILE: /var/lib/inferbolt/dev-token
     volumes:

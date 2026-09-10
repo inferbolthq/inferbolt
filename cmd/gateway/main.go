@@ -42,6 +42,14 @@ func main() {
 
 	port := getenv("PORT", "8080")
 	env := getenv("ENV", "development")
+
+	// Browser clients need an explicit origin allowlist; the CLI and services
+	// do not, so CORS stays off unless configured. In development the Vite dev
+	// server is allowed by default so `npm run dev` works without setup.
+	corsOrigins := splitAndTrim(getenv("CORS_ALLOWED_ORIGINS", ""))
+	if len(corsOrigins) == 0 && env == "development" {
+		corsOrigins = iauth.DefaultDevOrigins
+	}
 	otelEndpoint := getenv("OTEL_ENDPOINT", "")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -78,6 +86,10 @@ func main() {
 	if otelEndpoint != "" {
 		slog.Info("OTel endpoint configured; set SDK env vars to enable exporter", "endpoint", otelEndpoint)
 	}
+	if len(corsOrigins) > 0 {
+		slog.Info("CORS enabled", "allowed_origins", corsOrigins)
+	}
+
 	tracer := otel.Tracer("inferbolt/gateway")
 
 	h := gateway.NewHandler(gateway.HandlerDeps{
@@ -92,6 +104,9 @@ func main() {
 	})
 
 	r := chi.NewRouter()
+	// Ahead of auth: a CORS preflight carries no Authorization header, so it
+	// must be answered before anything tries to authenticate it.
+	r.Use(iauth.CORSMiddleware(corsOrigins))
 	r.Use(iauth.RequestIDMiddleware())
 	r.Use(iauth.LoggerMiddleware())
 	r.Use(iauth.OTelMiddleware(tracer))
@@ -249,6 +264,17 @@ func mustEnv(key string) string {
 		os.Exit(1)
 	}
 	return v
+}
+
+// splitAndTrim parses a comma-separated env var into non-empty values.
+func splitAndTrim(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func getenv(key, fallback string) string {
