@@ -60,9 +60,13 @@ func (m *mockStore) UpdateJobState(_ context.Context, _ string, _ jobs.JobState,
 	return m.updateErr
 }
 
-type mockQueue struct{ enqueueErr error }
+type mockQueue struct {
+	enqueueErr error
+	lastArgs   queue.BenchmarkJobArgs
+}
 
-func (m *mockQueue) Enqueue(_ context.Context, _ queue.BenchmarkJobArgs) error {
+func (m *mockQueue) Enqueue(_ context.Context, args queue.BenchmarkJobArgs) error {
+	m.lastArgs = args
 	return m.enqueueErr
 }
 
@@ -270,4 +274,176 @@ func TestListWorkers_OrchestratorUnreachable(t *testing.T) {
 	h.ListWorkers(w, r)
 
 	assert.Equal(t, http.StatusBadGateway, w.Code)
+}
+
+// ── engine_config / workload validation ────────────────────────────────────────
+
+func validCreateBody(overrides map[string]any) map[string]any {
+	body := map[string]any{
+		"model":       "meta-llama/Llama-3.1-8B",
+		"engines":     []string{"vllm"},
+		"gpu_profile": "a100-80gb",
+		"workload":    map[string]any{"concurrency": 32, "prompt_tokens": 512, "output_tokens": 256, "num_requests": 100},
+	}
+	for k, v := range overrides {
+		body[k] = v
+	}
+	return body
+}
+
+func TestCreateJob_ValidatesEngineConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		config     map[string]any
+		wantStatus int
+		wantMsg    string
+	}{
+		{
+			name:       "omitted entirely is valid — worker applies its own defaults",
+			config:     nil,
+			wantStatus: http.StatusAccepted,
+		},
+		{
+			name:       "zero values mean unset, not invalid",
+			config:     map[string]any{"tensor_parallel": 0, "max_batch_size": 0, "gpu_memory_utilization": 0},
+			wantStatus: http.StatusAccepted,
+		},
+		{
+			name:       "fully specified",
+			config:     map[string]any{"quantization": "fp8", "tensor_parallel": 2, "max_batch_size": 256, "max_model_len": 8192, "gpu_memory_utilization": 0.9},
+			wantStatus: http.StatusAccepted,
+		},
+		{
+			name:       "unknown quantization is rejected, not passed through to the engine CLI",
+			config:     map[string]any{"quantization": "--rm -rf"},
+			wantStatus: http.StatusBadRequest,
+			wantMsg:    "unknown quantization",
+		},
+		{
+			name:       "tensor_parallel above the supported range",
+			config:     map[string]any{"tensor_parallel": 16},
+			wantStatus: http.StatusBadRequest,
+			wantMsg:    "tensor_parallel",
+		},
+		{
+			name:       "negative tensor_parallel",
+			config:     map[string]any{"tensor_parallel": -1},
+			wantStatus: http.StatusBadRequest,
+			wantMsg:    "tensor_parallel",
+		},
+		{
+			name:       "max_batch_size above the supported range",
+			config:     map[string]any{"max_batch_size": 100000},
+			wantStatus: http.StatusBadRequest,
+			wantMsg:    "max_batch_size",
+		},
+		{
+			name:       "gpu_memory_utilization above 1",
+			config:     map[string]any{"gpu_memory_utilization": 1.5},
+			wantStatus: http.StatusBadRequest,
+			wantMsg:    "gpu_memory_utilization",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHandler(t, &mockStore{}, &mockQueue{}, &mockPinger{})
+			overrides := map[string]any{}
+			if tt.config != nil {
+				overrides["engine_config"] = tt.config
+			}
+			body := jsonBody(t, validCreateBody(overrides))
+			r := withTenant(httptest.NewRequest(http.MethodPost, "/v1/jobs", body), "tenant1")
+			w := httptest.NewRecorder()
+			h.CreateJob(w, r)
+
+			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			if tt.wantMsg != "" {
+				assert.Contains(t, w.Body.String(), tt.wantMsg)
+			}
+		})
+	}
+}
+
+func TestCreateJob_ValidatesWorkload(t *testing.T) {
+	tests := []struct {
+		name     string
+		workload map[string]any
+		wantMsg  string
+	}{
+		{
+			// Semaphore(0) on the worker means the benchmark never starts and the
+			// job hangs until the orchestrator's 45-minute poll timeout.
+			name:     "zero concurrency is rejected rather than dispatched",
+			workload: map[string]any{"concurrency": 0, "prompt_tokens": 512, "output_tokens": 256, "num_requests": 100},
+			wantMsg:  "concurrency",
+		},
+		{
+			name:     "zero num_requests",
+			workload: map[string]any{"concurrency": 32, "prompt_tokens": 512, "output_tokens": 256, "num_requests": 0},
+			wantMsg:  "num_requests",
+		},
+		{
+			name:     "negative prompt_tokens",
+			workload: map[string]any{"concurrency": 32, "prompt_tokens": -1, "output_tokens": 256, "num_requests": 100},
+			wantMsg:  "prompt_tokens",
+		},
+		{
+			name:     "output_tokens beyond the cap",
+			workload: map[string]any{"concurrency": 32, "prompt_tokens": 512, "output_tokens": 9_000_000, "num_requests": 100},
+			wantMsg:  "output_tokens",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHandler(t, &mockStore{}, &mockQueue{}, &mockPinger{})
+			body := jsonBody(t, validCreateBody(map[string]any{"workload": tt.workload}))
+			r := withTenant(httptest.NewRequest(http.MethodPost, "/v1/jobs", body), "tenant1")
+			w := httptest.NewRecorder()
+			h.CreateJob(w, r)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), tt.wantMsg)
+		})
+	}
+}
+
+// The whole point of the engine_config path: what the caller asked for has to
+// survive persistence and reach the worker dispatch payload unchanged.
+func TestCreateJob_EngineConfigReachesStoreAndQueue(t *testing.T) {
+	store := &mockStore{}
+	q := &mockQueue{}
+	h := newHandler(t, store, q, &mockPinger{})
+
+	body := jsonBody(t, validCreateBody(map[string]any{
+		"engine_config": map[string]any{"quantization": "int4", "tensor_parallel": 4, "max_batch_size": 512},
+	}))
+	r := withTenant(httptest.NewRequest(http.MethodPost, "/v1/jobs", body), "tenant1")
+	w := httptest.NewRecorder()
+	h.CreateJob(w, r)
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+
+	require.NotNil(t, store.job)
+	assert.Equal(t, "int4", store.job.EngineConfig.Quantization)
+	assert.Equal(t, 4, store.job.EngineConfig.TensorParallel)
+	assert.Equal(t, 512, store.job.EngineConfig.MaxBatchSize)
+
+	assert.Equal(t, "int4", q.lastArgs.EngineConfig.Quantization)
+	assert.Equal(t, 4, q.lastArgs.EngineConfig.TensorParallel)
+	assert.Equal(t, 512, q.lastArgs.EngineConfig.MaxBatchSize)
+}
+
+// Unset fields must not serialize as explicit zeros — the worker treats 0 as a
+// real value for tensor_parallel and would start an engine with nonsense flags.
+func TestBenchmarkJobArgs_OmitsUnsetEngineConfig(t *testing.T) {
+	b, err := json.Marshal(queue.BenchmarkJobArgs{
+		JobID:        "job-1",
+		EngineConfig: queue.EngineConfig{Quantization: "fp8"},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"quantization":"fp8"`)
+	assert.NotContains(t, string(b), "tensor_parallel")
+	assert.NotContains(t, string(b), "max_batch_size")
+	assert.NotContains(t, string(b), "gpu_memory_utilization")
 }

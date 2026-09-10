@@ -21,12 +21,24 @@ type WorkloadConfig struct {
 	NumRequests  int `json:"num_requests"`
 }
 
+// EngineConfig holds the inference-engine tuning knobs for a job. Zero-valued
+// fields are omitted on the wire so the Python worker applies its own defaults;
+// an explicit 0 would be a real — and invalid — value there.
+type EngineConfig struct {
+	Quantization         string  `json:"quantization,omitempty"`
+	TensorParallel       int     `json:"tensor_parallel,omitempty"`
+	MaxBatchSize         int     `json:"max_batch_size,omitempty"`
+	MaxModelLen          int     `json:"max_model_len,omitempty"`
+	GPUMemoryUtilization float64 `json:"gpu_memory_utilization,omitempty"`
+}
+
 type Job struct {
 	ID             string         `json:"id"`
 	TenantID       string         `json:"tenant_id"`
 	Model          string         `json:"model"`
 	Engines        []string       `json:"engines"`
 	WorkloadConfig WorkloadConfig `json:"workload_config"`
+	EngineConfig   EngineConfig   `json:"engine_config"`
 	GPUProfile     string         `json:"gpu_profile"`
 	State          JobState       `json:"state"`
 	CreatedAt      time.Time      `json:"created_at"`

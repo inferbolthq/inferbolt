@@ -21,13 +21,23 @@ type WorkloadConfig struct {
 	NumRequests  int `json:"num_requests"`
 }
 
+// EngineConfig mirrors jobs.EngineConfig, for the same reason WorkloadConfig does.
+type EngineConfig struct {
+	Quantization         string  `json:"quantization,omitempty"`
+	TensorParallel       int     `json:"tensor_parallel,omitempty"`
+	MaxBatchSize         int     `json:"max_batch_size,omitempty"`
+	MaxModelLen          int     `json:"max_model_len,omitempty"`
+	GPUMemoryUtilization float64 `json:"gpu_memory_utilization,omitempty"`
+}
+
 type BenchmarkJobArgs struct {
-	JobID      string         `json:"job_id"`
-	Model      string         `json:"model"`
-	Engines    []string       `json:"engines"`
-	Workload   WorkloadConfig `json:"workload"`
-	GPUProfile string         `json:"gpu_profile"`
-	TenantID   string         `json:"tenant_id"`
+	JobID        string         `json:"job_id"`
+	Model        string         `json:"model"`
+	Engines      []string       `json:"engines"`
+	Workload     WorkloadConfig `json:"workload"`
+	EngineConfig EngineConfig   `json:"engine_config"`
+	GPUProfile   string         `json:"gpu_profile"`
+	TenantID     string         `json:"tenant_id"`
 }
 
 func (BenchmarkJobArgs) Kind() string { return "benchmark_job" }

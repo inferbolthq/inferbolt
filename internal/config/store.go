@@ -23,12 +23,16 @@ func (s *Store) SaveJob(ctx context.Context, job jobs.Job) error {
 	if err != nil {
 		return fmt.Errorf("marshal workload config: %w", err)
 	}
+	ecJSON, err := json.Marshal(job.EngineConfig)
+	if err != nil {
+		return fmt.Errorf("marshal engine config: %w", err)
+	}
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO public.jobs
-		  (id, tenant_id, model, engines, workload_config, gpu_profile, state, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		  (id, tenant_id, model, engines, workload_config, engine_config, gpu_profile, state, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		job.ID, job.TenantID, job.Model, job.Engines,
-		wcJSON, job.GPUProfile, string(job.State),
+		wcJSON, ecJSON, job.GPUProfile, string(job.State),
 		job.CreatedAt, job.UpdatedAt,
 	)
 	if err != nil {
@@ -39,16 +43,16 @@ func (s *Store) SaveJob(ctx context.Context, job jobs.Job) error {
 
 func (s *Store) GetJob(ctx context.Context, jobID, tenantID string) (*jobs.Job, error) {
 	var j jobs.Job
-	var wcJSON []byte
+	var wcJSON, ecJSON []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, model, engines, workload_config, gpu_profile,
+		SELECT id, tenant_id, model, engines, workload_config, engine_config, gpu_profile,
 		       state, created_at, updated_at,
 		       COALESCE(error_msg, ''), COALESCE(run_id, '')
 		FROM public.jobs
 		WHERE id = $1 AND tenant_id = $2`,
 		jobID, tenantID,
 	).Scan(
-		&j.ID, &j.TenantID, &j.Model, &j.Engines, &wcJSON, &j.GPUProfile,
+		&j.ID, &j.TenantID, &j.Model, &j.Engines, &wcJSON, &ecJSON, &j.GPUProfile,
 		&j.State, &j.CreatedAt, &j.UpdatedAt, &j.ErrorMsg, &j.RunID,
 	)
 	if err != nil {
@@ -56,6 +60,9 @@ func (s *Store) GetJob(ctx context.Context, jobID, tenantID string) (*jobs.Job, 
 	}
 	if err = json.Unmarshal(wcJSON, &j.WorkloadConfig); err != nil {
 		return nil, fmt.Errorf("unmarshal workload config: %w", err)
+	}
+	if err = json.Unmarshal(ecJSON, &j.EngineConfig); err != nil {
+		return nil, fmt.Errorf("unmarshal engine config: %w", err)
 	}
 	return &j, nil
 }
@@ -105,15 +112,15 @@ func (s *Store) SaveRecommendation(ctx context.Context, rec jobs.Recommendation)
 // GetJobByID fetches a job by ID only, without tenant filtering. Used internally.
 func (s *Store) GetJobByID(ctx context.Context, jobID string) (*jobs.Job, error) {
 	var j jobs.Job
-	var wcJSON []byte
+	var wcJSON, ecJSON []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, model, engines, workload_config, gpu_profile,
+		SELECT id, tenant_id, model, engines, workload_config, engine_config, gpu_profile,
 		       state, created_at, updated_at,
 		       COALESCE(error_msg, ''), COALESCE(run_id, '')
 		FROM public.jobs
 		WHERE id = $1`, jobID,
 	).Scan(
-		&j.ID, &j.TenantID, &j.Model, &j.Engines, &wcJSON, &j.GPUProfile,
+		&j.ID, &j.TenantID, &j.Model, &j.Engines, &wcJSON, &ecJSON, &j.GPUProfile,
 		&j.State, &j.CreatedAt, &j.UpdatedAt, &j.ErrorMsg, &j.RunID,
 	)
 	if err != nil {
@@ -122,13 +129,16 @@ func (s *Store) GetJobByID(ctx context.Context, jobID string) (*jobs.Job, error)
 	if err = json.Unmarshal(wcJSON, &j.WorkloadConfig); err != nil {
 		return nil, fmt.Errorf("unmarshal workload config: %w", err)
 	}
+	if err = json.Unmarshal(ecJSON, &j.EngineConfig); err != nil {
+		return nil, fmt.Errorf("unmarshal engine config: %w", err)
+	}
 	return &j, nil
 }
 
 // ListJobs returns a paginated slice of jobs for a tenant, filtered by state when non-empty.
 func (s *Store) ListJobs(ctx context.Context, tenantID, state string, limit, offset int) ([]jobs.Job, error) {
 	query := `
-		SELECT id, tenant_id, model, engines, workload_config, gpu_profile,
+		SELECT id, tenant_id, model, engines, workload_config, engine_config, gpu_profile,
 		       state, created_at, updated_at,
 		       COALESCE(error_msg, ''), COALESCE(run_id, '')
 		FROM public.jobs
@@ -151,15 +161,18 @@ func (s *Store) ListJobs(ctx context.Context, tenantID, state string, limit, off
 	var out []jobs.Job
 	for rows.Next() {
 		var j jobs.Job
-		var wcJSON []byte
+		var wcJSON, ecJSON []byte
 		if err := rows.Scan(
-			&j.ID, &j.TenantID, &j.Model, &j.Engines, &wcJSON, &j.GPUProfile,
+			&j.ID, &j.TenantID, &j.Model, &j.Engines, &wcJSON, &ecJSON, &j.GPUProfile,
 			&j.State, &j.CreatedAt, &j.UpdatedAt, &j.ErrorMsg, &j.RunID,
 		); err != nil {
 			return nil, fmt.Errorf("scan job: %w", err)
 		}
 		if err := json.Unmarshal(wcJSON, &j.WorkloadConfig); err != nil {
 			return nil, fmt.Errorf("unmarshal workload config: %w", err)
+		}
+		if err := json.Unmarshal(ecJSON, &j.EngineConfig); err != nil {
+			return nil, fmt.Errorf("unmarshal engine config: %w", err)
 		}
 		out = append(out, j)
 	}
@@ -193,4 +206,3 @@ func (s *Store) AppendAuditLog(ctx context.Context, tenantID, action, resourceID
 	}
 	return nil
 }
-

@@ -83,14 +83,59 @@ var validEngines = map[string]bool{
 	"llamacpp": true, "ollama": true, "mock": true,
 }
 
+// Quantization values are forwarded verbatim as engine CLI arguments
+// (vllm --quantization, sglang --quantization), so the set is closed.
+var validQuantizations = map[string]bool{
+	"fp8": true, "int8": true, "int4": true, "gptq": true, "awq": true,
+}
+
+// validateWorkload bounds the shape of a benchmark run. These are rejections,
+// not clamps: a caller that asks for something unrunnable should hear about it
+// rather than silently get a different benchmark than it requested. Zero
+// concurrency is the sharpest edge — it wedges the worker on an
+// asyncio.Semaphore(0) until the orchestrator's 45-minute poll timeout fires.
+func validateWorkload(w jobs.WorkloadConfig) error {
+	switch {
+	case w.Concurrency < 1 || w.Concurrency > 1024:
+		return apiError("workload.concurrency must be between 1 and 1024")
+	case w.PromptTokens < 1 || w.PromptTokens > 1_000_000:
+		return apiError("workload.prompt_tokens must be between 1 and 1000000")
+	case w.OutputTokens < 1 || w.OutputTokens > 1_000_000:
+		return apiError("workload.output_tokens must be between 1 and 1000000")
+	case w.NumRequests < 1 || w.NumRequests > 100_000:
+		return apiError("workload.num_requests must be between 1 and 100000")
+	}
+	return nil
+}
+
+// validateEngineConfig bounds the engine tuning knobs. A zero value means
+// "unset" and is left to the worker's own default, so only non-zero fields
+// are range-checked.
+func validateEngineConfig(c jobs.EngineConfig) error {
+	switch {
+	case c.Quantization != "" && !validQuantizations[c.Quantization]:
+		return apiError("unknown quantization: " + c.Quantization)
+	case c.TensorParallel < 0 || c.TensorParallel > 8:
+		return apiError("engine_config.tensor_parallel must be between 1 and 8 (0 = engine default)")
+	case c.MaxBatchSize < 0 || c.MaxBatchSize > 4096:
+		return apiError("engine_config.max_batch_size must be between 1 and 4096 (0 = engine default)")
+	case c.MaxModelLen < 0 || c.MaxModelLen > 1_048_576:
+		return apiError("engine_config.max_model_len must be between 1 and 1048576 (0 = engine default)")
+	case c.GPUMemoryUtilization < 0 || c.GPUMemoryUtilization > 1:
+		return apiError("engine_config.gpu_memory_utilization must be between 0 and 1 (0 = engine default)")
+	}
+	return nil
+}
+
 // ── POST /v1/jobs ─────────────────────────────────────────────────────────────
 
 type CreateJobRequest struct {
-	Model      string              `json:"model"`
-	Engines    []string            `json:"engines"`
-	Workload   jobs.WorkloadConfig `json:"workload"`
-	GPUProfile string              `json:"gpu_profile"`
-	AutoRoute  bool                `json:"auto_route"`
+	Model        string              `json:"model"`
+	Engines      []string            `json:"engines"`
+	Workload     jobs.WorkloadConfig `json:"workload"`
+	EngineConfig jobs.EngineConfig   `json:"engine_config"`
+	GPUProfile   string              `json:"gpu_profile"`
+	AutoRoute    bool                `json:"auto_route"`
 }
 
 func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +165,14 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "gpu_profile is required"})
 		return
 	}
+	if err := validateWorkload(req.Workload); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := validateEngineConfig(req.EngineConfig); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	var recommendedEngine string
 	if req.AutoRoute {
@@ -144,6 +197,7 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		Model:          req.Model,
 		Engines:        req.Engines,
 		WorkloadConfig: req.Workload,
+		EngineConfig:   req.EngineConfig,
 		GPUProfile:     req.GPUProfile,
 		State:          jobs.StatePending,
 		CreatedAt:      now,
@@ -156,12 +210,13 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := h.queue.Enqueue(r.Context(), queue.BenchmarkJobArgs{
-		JobID:      job.ID,
-		Model:      job.Model,
-		Engines:    job.Engines,
-		Workload:   queue.WorkloadConfig(job.WorkloadConfig),
-		GPUProfile: job.GPUProfile,
-		TenantID:   tenantID,
+		JobID:        job.ID,
+		Model:        job.Model,
+		Engines:      job.Engines,
+		Workload:     queue.WorkloadConfig(job.WorkloadConfig),
+		EngineConfig: queue.EngineConfig(job.EngineConfig),
+		GPUProfile:   job.GPUProfile,
+		TenantID:     tenantID,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to enqueue job"})

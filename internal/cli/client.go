@@ -76,11 +76,12 @@ func decodeResp[T any](resp *http.Response) (T, error) {
 // ── Request / response types ──────────────────────────────────────────────────
 
 type CreateJobRequest struct {
-	Model      string              `json:"model"`
-	Engines    []string            `json:"engines"`
-	Workload   jobs.WorkloadConfig `json:"workload"`
-	GPUProfile string              `json:"gpu_profile"`
-	AutoRoute  bool                `json:"auto_route"`
+	Model        string              `json:"model"`
+	Engines      []string            `json:"engines"`
+	Workload     jobs.WorkloadConfig `json:"workload"`
+	EngineConfig jobs.EngineConfig   `json:"engine_config"`
+	GPUProfile   string              `json:"gpu_profile"`
+	AutoRoute    bool                `json:"auto_route"`
 }
 
 type JobResponse struct {
