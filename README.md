@@ -85,6 +85,20 @@ inferx/
 
 ## Quick Start
 
+### Fastest path: one command, no manual setup
+
+```bash
+go build -o inferbolt ./cmd/inferbolt
+./inferbolt run --model my-model --engines mock --gpu cpu
+```
+
+This single command starts the backing services (`docker compose up -d`) if they aren't already running, bootstraps a local dev API key on first run, spawns a Python worker for the `cpu` GPU profile if none is registered yet, submits the benchmark, and prints results. Requires Docker running locally and either `uv` or `python` on `PATH` (with `worker/`'s dependencies installed — `cd worker && uv sync`, or `pip install -e .` from the repo root). `--engines mock --gpu cpu` needs no real GPU or model server — it's the fastest way to confirm the whole pipeline works end to end; swap in `--engines vllm --gpu a100-80gb` (etc.) once you have real inference infrastructure.
+
+### Manual / step-by-step path
+
+<details>
+<summary>Useful when iterating on a single service instead of the whole stack</summary>
+
 ```bash
 # 1. Fetch Go dependencies
 go mod tidy
@@ -92,33 +106,29 @@ go mod tidy
 # 2. Install Python dependencies
 cd worker && uv sync
 
-# 3. Start backing services
-docker compose up -d   # ClickHouse, Postgres, Redis (coming soon)
+# 3. Start backing services (Postgres+TimescaleDB, gateway, orchestrator, router, collector)
+docker compose up -d
 
-# 4. Run the gateway (stub mode — no orchestrator needed)
-go run ./cmd/gateway
+# 4. Start a worker (from repo root) for the GPU profile you want to benchmark against
+python -m worker.main
 ```
-
-Gateway starts on **:8080** (HTTP) and **:9090** (gRPC).
 
 ```bash
 # Health check
 curl http://localhost:8080/health
-# {"status":"ok"}
+# {"status":"ok","version":"0.1.0","postgres":"ok"}
 
-# Submit a job (requires an API key)
+# Submit a job (requires a bearer token — see the dev API key logged/written by the
+# gateway on first startup, or run `inferbolt admin apikeys create` once you have one)
 curl -X POST http://localhost:8080/v1/jobs \
-  -H "X-API-Key: your-key" \
+  -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"model":"meta-llama/Llama-3-8B","engine":"vllm","workload":{"prompt_tokens":512,"completion_tokens":256,"concurrency":4,"duration_secs":60}}'
+  -d '{"model":"my-model","engines":["mock"],"workload":{"prompt_tokens":512,"output_tokens":256,"concurrency":4,"num_requests":50},"gpu_profile":"cpu"}'
 ```
 
-### Run a benchmark locally (mock engine, no GPU needed)
+</details>
 
-```bash
-cd worker
-JOB_ID=test-001 ENGINE=mock python -m benchmark
-```
+> Note: this section previously described a ClickHouse/Redis/`X-API-Key` architecture that doesn't match the current implementation (TimescaleDB, River, JWT-with-scopes auth) — see `.claude/context/known-issues.md` for the full list of corrections; a broader README rewrite is tracked there but not yet done.
 
 ---
 

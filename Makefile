@@ -36,6 +36,7 @@ build:
 	go build -o bin/router ./cmd/router
 	go build -o bin/collector ./cmd/collector
 	go build -o bin/operator ./cmd/operator
+	go build -o bin/inferbolt ./cmd/inferbolt
 
 test: test-unit
 

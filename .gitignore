@@ -25,4 +25,7 @@ Thumbs.db
 *.env
 *.local
 
+# bootstrapped dev API key — never commit
+.inferbolt-dev/
+
 .claude/
