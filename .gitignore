@@ -5,6 +5,10 @@ bin/
 *.out
 vendor/
 
+# Node
+node_modules/
+ui/dist/
+
 # Python
 __pycache__/
 *.py[cod]
