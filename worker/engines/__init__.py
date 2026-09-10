@@ -3,12 +3,14 @@ from .vllm_engine import VLLMEngine
 from .sglang_engine import SGLangEngine
 from .llamacpp_engine import LlamaCppEngine
 from .ollama_engine import OllamaEngine
+from .mock_engine import MockEngine
 
 ENGINES: dict[str, type[BaseEngine]] = {
     "vllm": VLLMEngine,
     "sglang": SGLangEngine,
     "llamacpp": LlamaCppEngine,
     "ollama": OllamaEngine,
+    "mock": MockEngine,
 }
 
 
