@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 )
@@ -107,6 +108,30 @@ func (r *WorkerRegistry) Count() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.workers)
+}
+
+// List returns a snapshot of all registered workers, sorted by ID for stable output.
+func (r *WorkerRegistry) List() []WorkerEntry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]WorkerEntry, 0, len(r.workers))
+	for _, w := range r.workers {
+		out = append(out, *w)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// HasIdle reports whether any registered worker is idle and matches gpuProfile.
+func (r *WorkerRegistry) HasIdle(gpuProfile string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, w := range r.workers {
+		if w.Status == StatusIdle && w.GPUType == gpuProfile {
+			return true
+		}
+	}
+	return false
 }
 
 // StartHeartbeatEviction runs EvictStale(30s) on every tick until ctx is cancelled.

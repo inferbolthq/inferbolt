@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -79,7 +80,7 @@ const errBadBody apiError = "empty or malformed request body"
 
 var validEngines = map[string]bool{
 	"vllm": true, "sglang": true, "tensorrt": true,
-	"llamacpp": true, "ollama": true,
+	"llamacpp": true, "ollama": true, "mock": true,
 }
 
 // ── POST /v1/jobs ─────────────────────────────────────────────────────────────
@@ -103,8 +104,8 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "model is required"})
 		return
 	}
-	if len(req.Engines) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one engine is required"})
+	if !req.AutoRoute && len(req.Engines) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one engine is required (or set auto_route)"})
 		return
 	}
 	for _, e := range req.Engines {
@@ -128,7 +129,11 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 			Concurrency:  req.Workload.Concurrency,
 		})
 		recommendedEngine = result.RecommendedEngine
-		req.Engines[0] = recommendedEngine
+		if len(req.Engines) == 0 {
+			req.Engines = []string{recommendedEngine}
+		} else {
+			req.Engines[0] = recommendedEngine
+		}
 	}
 
 	tenantID := iauth.MustGetTenantID(r.Context())
@@ -322,8 +327,31 @@ func (h *Handler) ListEngines(w http.ResponseWriter, r *http.Request) {
 		{"name": "tensorrt", "description": "Maximum throughput on NVIDIA hardware"},
 		{"name": "llamacpp", "description": "CPU inference, edge deployment, GGUF quantization"},
 		{"name": "ollama", "description": "Local development, easy model management"},
+		{"name": "mock", "description": "No-GPU smoke test, no real model server"},
 	}
 	writeJSON(w, http.StatusOK, engines)
+}
+
+// ── GET /v1/workers ───────────────────────────────────────────────────────────
+
+// ListWorkers relays the orchestrator's worker registry so browser/CLI clients only
+// ever need to talk to the gateway, never the orchestrator's unauthenticated internal port.
+func (h *Handler) ListWorkers(w http.ResponseWriter, r *http.Request) {
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, h.orchestratorURL+"/internal/workers", nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to build orchestrator request"})
+		return
+	}
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "orchestrator unreachable"})
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body) //nolint:errcheck
 }
 
 // ── POST /v1/admin/apikeys ────────────────────────────────────────────────────

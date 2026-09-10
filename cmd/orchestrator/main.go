@@ -104,6 +104,12 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	// Unauthenticated like its siblings — internal, same-host/cluster callers only.
+	r.Get("/internal/workers", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(registry.List()) //nolint:errcheck
+	})
+
 	r.Post("/internal/workers/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			WorkerID string `json:"worker_id"`

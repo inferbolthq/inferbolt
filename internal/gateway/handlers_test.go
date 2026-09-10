@@ -126,6 +126,27 @@ func TestCreateJob_Valid(t *testing.T) {
 	assert.NotEmpty(t, resp["job_id"])
 }
 
+func TestCreateJob_AutoRouteWithoutEngines(t *testing.T) {
+	// Regression: the handler used to require len(engines) > 0 even when auto_route
+	// was set, contradicting the CLI's own validation (--engines optional with --auto-route).
+	h := newHandler(t, &mockStore{}, &mockQueue{}, &mockPinger{})
+
+	body := jsonBody(t, map[string]any{
+		"model":       "meta-llama/Llama-3.1-8B",
+		"gpu_profile": "a100-80gb",
+		"auto_route":  true,
+		"workload":    map[string]any{"concurrency": 32, "prompt_tokens": 512, "output_tokens": 256, "num_requests": 100},
+	})
+	r := withTenant(httptest.NewRequest(http.MethodPost, "/v1/jobs", body), "tenant1")
+	w := httptest.NewRecorder()
+	h.CreateJob(w, r)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.NotEmpty(t, resp["recommended_engine"])
+}
+
 func TestCreateJob_MissingModel(t *testing.T) {
 	h := newHandler(t, &mockStore{}, &mockQueue{}, &mockPinger{})
 
@@ -215,4 +236,38 @@ func TestHealth_DBUp(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.Equal(t, "ok", resp["status"])
 	assert.Equal(t, "ok", resp["postgres"])
+}
+
+// ── ListWorkers ───────────────────────────────────────────────────────────────
+
+func TestListWorkers_RelaysOrchestratorResponse(t *testing.T) {
+	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/internal/workers", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"id":"w1","url":"http://127.0.0.1:9101","gpu_type":"cpu","status":"idle"}]`)) //nolint:errcheck
+	}))
+	defer orch.Close()
+
+	c := newCache(t)
+	km := iauth.NewKeyManager("test-secret-must-be-32-chars-long!!", c)
+	h := gateway.NewHandler(&mockStore{}, &mockQueue{}, &mockMetrics{}, km, &mockPinger{}, nil, orch.URL)
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/workers", nil)
+	w := httptest.NewRecorder()
+	h.ListWorkers(w, r)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"gpu_type":"cpu"`)
+}
+
+func TestListWorkers_OrchestratorUnreachable(t *testing.T) {
+	c := newCache(t)
+	km := iauth.NewKeyManager("test-secret-must-be-32-chars-long!!", c)
+	h := gateway.NewHandler(&mockStore{}, &mockQueue{}, &mockMetrics{}, km, &mockPinger{}, nil, "http://127.0.0.1:0")
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/workers", nil)
+	w := httptest.NewRecorder()
+	h.ListWorkers(w, r)
+
+	assert.Equal(t, http.StatusBadGateway, w.Code)
 }

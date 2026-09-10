@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InferBolt Dashboard</title>
+<style>
+  :root {
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --gridline: #e1e0d9;
+    --border: rgba(11,11,11,0.10);
+    --good: #0ca30c;
+    --warning: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --gridline: #2c2c2a;
+      --border: rgba(255,255,255,0.10);
+      --good: #0ca30c;
+      --warning: #fab219;
+      --serious: #ec835a;
+      --critical: #d03b3b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--text-primary);
+    padding: 24px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; }
+  .panel {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+    overflow-x: auto;
+  }
+  .panel h2 { font-size: 14px; margin: 0 0 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+  .config-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .config-row label { font-size: 12px; color: var(--text-secondary); }
+  .config-row input {
+    background: var(--page);
+    border: 1px solid var(--gridline);
+    border-radius: 4px;
+    padding: 6px 8px;
+    color: var(--text-primary);
+    font-size: 13px;
+    min-width: 220px;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--gridline); white-space: nowrap; }
+  th { color: var(--text-muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  td.num { font-variant-numeric: tabular-nums; }
+  tr.job-row { cursor: pointer; }
+  tr.job-row:hover { background: var(--page); }
+  .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+  .badge.good { color: var(--good); }
+  .badge.warning { color: var(--warning); }
+  .badge.serious { color: var(--serious); }
+  .badge.critical { color: var(--critical); }
+  .badge.muted { color: var(--text-muted); }
+  .empty { color: var(--text-muted); font-size: 13px; padding: 8px 0; }
+  .error { color: var(--critical); font-size: 13px; }
+  .results-row td { background: var(--page); padding: 12px; }
+</style>
+</head>
+<body>
+  <h1>InferBolt Dashboard</h1>
+  <p class="subtitle">Minimal, read-only view over the gateway API. No build step, no framework — a single static page.</p>
+
+  <div class="panel">
+    <h2>Connection</h2>
+    <div class="config-row">
+      <label>API token
+        <input id="token" type="password" placeholder="paste your bearer token (see .inferbolt-dev/dev-token in dev)">
+      </label>
+      <span id="conn-status" class="badge muted">not connected</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Workers</h2>
+    <div id="workers-wrap"><p class="empty">Waiting for connection…</p></div>
+  </div>
+
+  <div class="panel">
+    <h2>Jobs</h2>
+    <div id="jobs-wrap"><p class="empty">Waiting for connection…</p></div>
+  </div>
+
+<script>
+const tokenInput = document.getElementById('token');
+tokenInput.value = localStorage.getItem('inferbolt_token') || '';
+tokenInput.addEventListener('input', () => localStorage.setItem('inferbolt_token', tokenInput.value));
+
+const connStatus = document.getElementById('conn-status');
+const workersWrap = document.getElementById('workers-wrap');
+const jobsWrap = document.getElementById('jobs-wrap');
+
+async function api(path) {
+  const resp = await fetch(path, { headers: { 'Authorization': 'Bearer ' + tokenInput.value } });
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`${resp.status}: ${body}`);
+  }
+  return resp.json();
+}
+
+function statusBadge(status) {
+  const map = {
+    idle: ['good', '●', 'idle'], busy: ['warning', '●', 'busy'], offline: ['critical', '●', 'offline'],
+    pending: ['muted', '⏳', 'pending'], running: ['warning', '↻', 'running'],
+    collecting: ['warning', '↻', 'collecting'], analyzing: ['warning', '↻', 'analyzing'],
+    completed: ['good', '✓', 'completed'], failed: ['critical', '✕', 'failed'], cancelled: ['muted', '–', 'cancelled'],
+  };
+  const [cls, icon, label] = map[status] || ['muted', '?', status];
+  return `<span class="badge ${cls}">${icon} ${label}</span>`;
+}
+
+function shortId(id) { return id && id.length > 10 ? id.slice(0, 8) + '…' : id; }
+
+async function refreshWorkers() {
+  const workers = await api('/v1/workers');
+  if (!workers.length) { workersWrap.innerHTML = '<p class="empty">No workers registered.</p>'; return; }
+  const rows = workers.map(w => `
+    <tr>
+      <td>${shortId(w.id)}</td>
+      <td>${w.gpu_type}</td>
+      <td>${statusBadge(w.status)}</td>
+      <td>${w.current_job_id ? shortId(w.current_job_id) : '–'}</td>
+      <td>${new Date(w.last_seen).toLocaleTimeString()}</td>
+    </tr>`).join('');
+  workersWrap.innerHTML = `<table><thead><tr><th>ID</th><th>GPU</th><th>Status</th><th>Job</th><th>Last Seen</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function refreshJobs() {
+  const data = await api('/v1/jobs?limit=20');
+  const jobList = data.jobs || [];
+  if (!jobList.length) { jobsWrap.innerHTML = '<p class="empty">No jobs yet.</p>'; return; }
+  const rows = jobList.map(j => `
+    <tr class="job-row" data-job-id="${j.id}">
+      <td>${shortId(j.id)}</td>
+      <td>${j.model}</td>
+      <td>${statusBadge(j.state)}</td>
+      <td>${(j.engines || []).join(', ')}</td>
+      <td>${new Date(j.created_at).toLocaleString()}</td>
+    </tr>
+    <tr class="results-row" id="results-${j.id}" style="display:none"><td colspan="5"></td></tr>`).join('');
+  jobsWrap.innerHTML = `<table><thead><tr><th>ID</th><th>Model</th><th>State</th><th>Engines</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table>`;
+
+  jobsWrap.querySelectorAll('.job-row').forEach(row => {
+    row.addEventListener('click', () => toggleResults(row.dataset.jobId));
+  });
+}
+
+async function toggleResults(jobId) {
+  const cell = document.getElementById('results-' + jobId);
+  const visible = cell.style.display !== 'none';
+  if (visible) { cell.style.display = 'none'; return; }
+  cell.style.display = '';
+  cell.querySelector('td').textContent = 'Loading…';
+  try {
+    const results = await api(`/v1/jobs/${jobId}/results`);
+    if (!results.length) { cell.querySelector('td').textContent = 'No results yet.'; return; }
+    const rows = results.map(r => `
+      <tr>
+        <td>${r.engine}</td>
+        <td class="num">${r.ttft_p50_ms?.toFixed(1)} ms</td>
+        <td class="num">${r.ttft_p99_ms?.toFixed(1)} ms</td>
+        <td class="num">${r.tok_per_s?.toFixed(0)}</td>
+        <td class="num">${r.gpu_mem_mb} MB</td>
+        <td class="num">$${r.cost_per_mtok?.toFixed(4)}</td>
+        <td class="num">${(r.kv_cache_hit * 100).toFixed(1)}%</td>
+      </tr>`).join('');
+    cell.querySelector('td').innerHTML = `<table><thead><tr><th>Engine</th><th>TTFT P50</th><th>TTFT P99</th><th>Tok/s</th><th>GPU Mem</th><th>Cost/MTok</th><th>KV Hit</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) {
+    cell.querySelector('td').innerHTML = `<span class="error">${e.message}</span>`;
+  }
+}
+
+async function refreshAll() {
+  if (!tokenInput.value) {
+    connStatus.className = 'badge muted';
+    connStatus.textContent = 'enter a token to connect';
+    return;
+  }
+  try {
+    await refreshWorkers();
+    await refreshJobs();
+    connStatus.className = 'badge good';
+    connStatus.textContent = '● connected';
+  } catch (e) {
+    connStatus.className = 'badge critical';
+    connStatus.textContent = 'error: ' + e.message;
+  }
+}
+
+tokenInput.addEventListener('change', refreshAll);
+refreshAll();
+setInterval(refreshAll, 5000);
+</script>
+</body>
+</html>
