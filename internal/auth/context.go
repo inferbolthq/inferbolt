@@ -4,10 +4,7 @@ import "context"
 
 type contextKey string
 
-const (
-	tenantIDKey contextKey = "tenant_id"
-	tierKey     contextKey = "tier"
-)
+const tenantIDKey contextKey = "tenant_id"
 
 func SetTenantID(ctx context.Context, tenantID string) context.Context {
 	return context.WithValue(ctx, tenantIDKey, tenantID)
@@ -27,13 +24,4 @@ func MustGetTenantID(ctx context.Context) string {
 		panic("tenant_id not in context")
 	}
 	return id
-}
-
-func SetTier(ctx context.Context, t Tier) context.Context {
-	return context.WithValue(ctx, tierKey, t)
-}
-
-func GetTier(ctx context.Context) Tier {
-	t, _ := ctx.Value(tierKey).(Tier)
-	return t
 }
