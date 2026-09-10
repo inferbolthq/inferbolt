@@ -2,9 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -38,9 +44,11 @@ var rootCmd = &cobra.Command{
 	Use:   "inferbolt",
 	Short: "InferBolt — open-source LLM inference optimization toolkit",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// configure and version work without a loaded config
+		// configure and version work without a loaded config; run does its own
+		// bootstrap-aware config resolution (it can auto-provision a local dev
+		// credential, so a missing API key isn't necessarily fatal for it).
 		name := cmd.Name()
-		if name == "configure" || name == "version" {
+		if name == "configure" || name == "version" || name == "run" {
 			return nil
 		}
 		var err error
@@ -68,6 +76,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&outputFlag, "output", "table", "Output format: table or json")
 
 	rootCmd.AddCommand(newBenchmarkCmd())
+	rootCmd.AddCommand(newRunCmd())
 	rootCmd.AddCommand(newJobsCmd())
 	rootCmd.AddCommand(newMetricsCmd())
 	rootCmd.AddCommand(newRouteCmd())
@@ -143,35 +152,10 @@ func newBenchmarkRunCmd() *cobra.Command {
 				engineLabel = jobResp.RecommendedEngine
 			}
 
-			// Progress bar — updates on each state change
-			bar := progressbar.NewOptions(-1,
-				progressbar.OptionSetDescription(
-					fmt.Sprintf("Benchmarking %s on %s...", model, engineLabel)),
-				progressbar.OptionSpinnerType(14),
-				progressbar.OptionSetWriter(os.Stderr),
-				progressbar.OptionEnableColorCodes(true),
-				progressbar.OptionOnCompletion(func() { fmt.Fprintln(os.Stderr) }),
-			)
-
-			finalJob, err := apiClient.PollJob(cmd.Context(), jobResp.JobID, func(j jobs.Job) {
-				bar.Describe(fmt.Sprintf("Benchmarking %s on %s [%s]...",
-					model, engineLabel, string(j.State)))
-				bar.Add(1) //nolint:errcheck
-			})
+			finalJob, results, err := pollAndReport(cmd.Context(), jobResp.JobID,
+				fmt.Sprintf("Benchmarking %s on %s", model, engineLabel))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			bar.Finish() //nolint:errcheck
-
-			if finalJob.State == jobs.StateFailed {
-				fmt.Fprintf(os.Stderr, "Benchmark failed: %s\n", finalJob.ErrorMsg)
-				os.Exit(1)
-			}
-
-			results, err := apiClient.GetJobResults(cmd.Context(), jobResp.JobID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error fetching results: %v\n", err)
 				os.Exit(1)
 			}
 
@@ -245,30 +229,8 @@ func newBenchmarkCompareCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			bar := progressbar.NewOptions(-1,
-				progressbar.OptionSetDescription(
-					fmt.Sprintf("Comparing engines for %s...", model)),
-				progressbar.OptionSpinnerType(14),
-				progressbar.OptionSetWriter(os.Stderr),
-				progressbar.OptionOnCompletion(func() { fmt.Fprintln(os.Stderr) }),
-			)
-
-			finalJob, err := apiClient.PollJob(cmd.Context(), jobResp.JobID, func(j jobs.Job) {
-				bar.Describe(fmt.Sprintf("Comparing engines for %s [%s]...", model, j.State))
-				bar.Add(1) //nolint:errcheck
-			})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			bar.Finish() //nolint:errcheck
-
-			if finalJob.State == jobs.StateFailed {
-				fmt.Fprintf(os.Stderr, "Benchmark failed: %s\n", finalJob.ErrorMsg)
-				os.Exit(1)
-			}
-
-			results, err := apiClient.GetJobResults(cmd.Context(), jobResp.JobID)
+			_, results, err := pollAndReport(cmd.Context(), jobResp.JobID,
+				fmt.Sprintf("Comparing engines for %s", model))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -297,12 +259,550 @@ func newBenchmarkCompareCmd() *cobra.Command {
 	return cmd
 }
 
+// pollAndReport polls jobID to completion with a progress bar labeled desc, then fetches
+// and returns the final results. Shared by `benchmark run`, `benchmark compare`, and `run`.
+func pollAndReport(ctx context.Context, jobID, desc string) (*jobs.Job, []jobs.Result, error) {
+	bar := progressbar.NewOptions(-1,
+		progressbar.OptionSetDescription(desc+"..."),
+		progressbar.OptionSpinnerType(14),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionEnableColorCodes(true),
+		progressbar.OptionOnCompletion(func() { fmt.Fprintln(os.Stderr) }),
+	)
+
+	finalJob, err := apiClient.PollJob(ctx, jobID, func(j jobs.Job) {
+		bar.Describe(fmt.Sprintf("%s [%s]...", desc, string(j.State)))
+		bar.Add(1) //nolint:errcheck
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	bar.Finish() //nolint:errcheck
+
+	if finalJob.State == jobs.StateFailed {
+		return finalJob, nil, fmt.Errorf("benchmark failed: %s", finalJob.ErrorMsg)
+	}
+
+	results, err := apiClient.GetJobResults(ctx, jobID)
+	if err != nil {
+		return finalJob, nil, fmt.Errorf("fetching results: %w", err)
+	}
+	return finalJob, results, nil
+}
+
+// ── run ───────────────────────────────────────────────────────────────────────
+// Doesn't tear down docker-compose (long-lived infra), but does stop a worker it
+// spawned itself unless --keep-worker is set.
+
+// runManifest is the JSON artifact written by --save, for later debugging.
+type runManifest struct {
+	JobID   string               `json:"job_id"`
+	Model   string               `json:"model"`
+	Engines []string             `json:"engines"`
+	GPUHost string               `json:"gpu_host,omitempty"`
+	Request cli.CreateJobRequest `json:"request"`
+	State   string               `json:"state"`
+	Results []jobs.Result        `json:"results"`
+	SavedAt time.Time            `json:"saved_at"`
+}
+
+func newRunCmd() *cobra.Command {
+	var (
+		modelFlag          string
+		enginesFlag        string
+		gpu                string
+		concurrency        int
+		promptTokens       int
+		outputTokens       int
+		requests           int
+		autoRoute          bool
+		projectDir         string
+		orchestratorFlag   string
+		keepWorker         bool
+		startupTimeoutSecs int
+		workerTimeoutSecs  int
+		gpuHost            string
+		remoteDir          string
+		savePath           string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "run [model]",
+		Short: "Run a benchmark end-to-end with no manual setup (starts services and workers as needed)",
+		Long: `run submits and executes a benchmark with no manual intervention required.
+
+Unlike 'benchmark run', which assumes the InferBolt backing services and a Python worker
+are already running, 'run' will:
+  1. Start the docker-compose backing services if the gateway isn't reachable.
+  2. Use (or auto-provision, in local dev) an API key if none is configured.
+  3. Spawn a worker for the requested --gpu profile if none is registered — locally, or
+     over SSH on --gpu-host if set.
+  4. Submit the benchmark (multiple --engines run as a comparison), wait, print results.
+
+Examples:
+  inferbolt run my-model --engines mock --gpu cpu
+  inferbolt run llama-3.1-8b-instant --engines sglang,vllm --gpu a100-80gb --save run.json
+  inferbolt run llama-3.1-8b-instant --engines vllm --gpu a100-80gb --gpu-host ubuntu@10.0.0.5`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			model := modelFlag
+			if len(args) == 1 {
+				model = args[0]
+			}
+			if model == "" {
+				return fmt.Errorf("model is required: `inferbolt run <model> ...`")
+			}
+			if !autoRoute && enginesFlag == "" {
+				return fmt.Errorf("--engines is required unless --auto-route is set")
+			}
+			if gpu == "" {
+				return fmt.Errorf("--gpu is required")
+			}
+			engines := splitCSV(enginesFlag)
+
+			ctx := cmd.Context()
+			startupTimeout := time.Duration(startupTimeoutSecs) * time.Second
+			workerTimeout := time.Duration(workerTimeoutSecs) * time.Second
+
+			runCfg, err := resolveOrBootstrapConfig(ctx, projectDir, startupTimeout)
+			if err != nil {
+				return err
+			}
+			cfg = runCfg
+			apiClient = cfg.NewClient()
+
+			orchestratorURL := orchestratorFlag
+			if orchestratorURL == "" {
+				orchestratorURL = os.Getenv("INFERBOLT_ORCHESTRATOR_URL")
+			}
+			if orchestratorURL == "" {
+				orchestratorURL = "http://localhost:8081"
+			}
+			orchClient := cli.NewOrchestratorClient(orchestratorURL)
+
+			hasIdle, err := orchClient.HasIdleWorker(ctx, gpu)
+			if err != nil {
+				return fmt.Errorf("checking worker availability (is the orchestrator reachable at %s?): %w", orchestratorURL, err)
+			}
+
+			if !hasIdle {
+				var stopWorker func()
+				var spawnErr error
+				if gpuHost != "" {
+					fmt.Fprintf(os.Stderr, "No idle worker for gpu_profile=%s — starting one on %s...\n", gpu, gpuHost)
+					stopWorker, spawnErr = spawnRemoteWorkerSSH(ctx, gpuHost, remoteDir, orchestratorURL, gpu)
+				} else {
+					fmt.Fprintf(os.Stderr, "No idle worker for gpu_profile=%s — starting one locally...\n", gpu)
+					stopWorker, spawnErr = spawnLocalWorker(ctx, projectDir, orchestratorURL, gpu)
+				}
+				if spawnErr != nil {
+					return spawnErr
+				}
+				if !keepWorker {
+					defer stopWorker()
+				} else {
+					fmt.Fprintln(os.Stderr, "--keep-worker set: leaving the spawned worker running.")
+				}
+
+				if err := waitForIdleWorker(ctx, orchClient, gpu, workerTimeout); err != nil {
+					return err
+				}
+				fmt.Fprintln(os.Stderr, "Worker registered — submitting benchmark.")
+			}
+
+			req := cli.CreateJobRequest{
+				Model:   model,
+				Engines: engines,
+				Workload: jobs.WorkloadConfig{
+					Concurrency:  concurrency,
+					PromptTokens: promptTokens,
+					OutputTokens: outputTokens,
+					NumRequests:  requests,
+				},
+				GPUProfile: gpu,
+				AutoRoute:  autoRoute,
+			}
+
+			jobResp, err := apiClient.CreateJob(ctx, req)
+			if err != nil {
+				return fmt.Errorf("submit job: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Watch progress at %s/dashboard\n", runCfg.ServerURL)
+
+			engineLabel := strings.Join(engines, ",")
+			if jobResp.RecommendedEngine != "" {
+				engineLabel = jobResp.RecommendedEngine
+			}
+
+			finalJob, results, err := pollAndReport(ctx, jobResp.JobID,
+				fmt.Sprintf("Benchmarking %s on %s", model, engineLabel))
+			if err != nil {
+				return err
+			}
+
+			if savePath != "" {
+				manifest := runManifest{
+					JobID: jobResp.JobID, Model: model, Engines: engines, GPUHost: gpuHost,
+					Request: req, State: string(finalJob.State), Results: results, SavedAt: time.Now().UTC(),
+				}
+				data, merr := json.MarshalIndent(manifest, "", "  ")
+				if merr == nil {
+					merr = os.WriteFile(savePath, data, 0o644)
+				}
+				if merr != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to save run manifest to %s: %v\n", savePath, merr)
+				} else {
+					fmt.Fprintf(os.Stderr, "Saved run manifest to %s\n", savePath)
+				}
+			}
+
+			if isJSON() {
+				return json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"job_id":  jobResp.JobID,
+					"model":   model,
+					"state":   string(finalJob.State),
+					"engines": engines,
+					"results": results,
+				})
+			}
+
+			if len(engines) > 1 {
+				printComparisonTable(results)
+			} else {
+				printResultsTable(results)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to benchmark (or pass as a positional argument)")
+	cmd.Flags().StringVar(&enginesFlag, "engines", "", "Comma-separated engines, e.g. vllm,sglang (required unless --auto-route)")
+	cmd.Flags().StringVar(&gpu, "gpu", "", "GPU profile, e.g. a100-80gb or cpu (required)")
+	cmd.Flags().IntVar(&concurrency, "concurrency", 32, "Number of concurrent requests (batch size)")
+	cmd.Flags().IntVar(&promptTokens, "prompt-tokens", 512, "Prompt length in tokens")
+	cmd.Flags().IntVar(&outputTokens, "output-tokens", 256, "Max output tokens")
+	cmd.Flags().IntVar(&requests, "requests", 200, "Total number of requests")
+	cmd.Flags().BoolVar(&autoRoute, "auto-route", false, "Auto-select best engine via classifier")
+	cmd.Flags().StringVar(&projectDir, "project-dir", ".", "Repo root containing docker-compose.yml and worker/")
+	cmd.Flags().StringVar(&orchestratorFlag, "orchestrator", "", "Orchestrator URL for worker-availability checks (default http://localhost:8081)")
+	cmd.Flags().BoolVar(&keepWorker, "keep-worker", false, "Leave a spawned worker process running after the benchmark finishes")
+	cmd.Flags().IntVar(&startupTimeoutSecs, "startup-timeout", 120, "Seconds to wait for backing services to become healthy")
+	cmd.Flags().StringVar(&gpuHost, "gpu-host", "", "SSH target (user@host) to run the worker on instead of locally")
+	cmd.Flags().StringVar(&remoteDir, "remote-dir", "~/inferbolt", "Repo path on --gpu-host (must already have worker/ deps installed)")
+	cmd.Flags().StringVar(&savePath, "save", "", "Write the full run manifest (request, state, results) as JSON to this path")
+	cmd.Flags().IntVar(&workerTimeoutSecs, "worker-timeout", 90, "Seconds to wait for a spawned worker to register")
+	return cmd
+}
+
+// resolveOrBootstrapConfig loads the CLI config, bootstrapping a local dev API key
+// (never for a non-local --server) if none is configured yet.
+func resolveOrBootstrapConfig(ctx context.Context, projectDir string, startupTimeout time.Duration) (*cli.Config, error) {
+	loaded, err := cli.Load()
+	effectiveServer := serverFlag
+	if effectiveServer == "" {
+		if loaded != nil {
+			effectiveServer = loaded.ServerURL
+		} else {
+			effectiveServer = cli.DefaultServerURL
+		}
+	}
+
+	if err == nil {
+		applyFlagOverrides(loaded)
+		if err := ensureServerHealthy(ctx, effectiveServer, projectDir, startupTimeout); err != nil {
+			return nil, err
+		}
+		return loaded, nil
+	}
+
+	if !errors.Is(err, cli.ErrAPIKeyNotConfigured) {
+		return nil, err
+	}
+	if !isLocalServerURL(effectiveServer) {
+		return nil, fmt.Errorf("%w (and --server points at a non-local address, so a credential can't be auto-provisioned)", err)
+	}
+
+	if err := ensureServerHealthy(ctx, effectiveServer, projectDir, startupTimeout); err != nil {
+		return nil, err
+	}
+
+	tokenPath := filepath.Join(projectDir, ".inferbolt-dev", "dev-token")
+	token, err := waitForDevToken(ctx, tokenPath, 15*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("no API key configured and could not read a bootstrapped dev token from %s: %w\n"+
+			"run 'inferbolt configure' to set one manually", tokenPath, err)
+	}
+
+	newCfg := &cli.Config{
+		ServerURL: effectiveServer,
+		APIKey:    token,
+		OutputFmt: "table",
+	}
+	applyFlagOverrides(newCfg)
+	if err := cli.Save(newCfg); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: bootstrapped a dev API key but failed to save it to config: %v\n", err)
+	} else {
+		fmt.Fprintln(os.Stderr, "Bootstrapped a local dev API key and saved it to ~/.inferbolt/config.yaml")
+	}
+	return newCfg, nil
+}
+
+func applyFlagOverrides(c *cli.Config) {
+	if serverFlag != "" {
+		c.ServerURL = serverFlag
+	}
+	if apiKeyFlag != "" {
+		c.APIKey = apiKeyFlag
+	}
+	if outputFlag != "" {
+		c.OutputFmt = outputFlag
+	}
+}
+
+// isLocalServerURL reports whether rawURL points at loopback.
+func isLocalServerURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func ensureServerHealthy(ctx context.Context, serverURL, projectDir string, startupTimeout time.Duration) error {
+	probe := cli.NewClient(serverURL, "")
+	if _, err := probe.Health(ctx); err == nil {
+		return nil // already up
+	}
+
+	composeFile := filepath.Join(projectDir, "docker-compose.yml")
+	if _, err := os.Stat(composeFile); err != nil {
+		return fmt.Errorf("gateway at %s is unreachable and no docker-compose.yml found at %s "+
+			"(pass --project-dir if you're not running from the repo root): %w", serverURL, composeFile, err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Gateway at %s is unreachable — starting backing services (docker compose up -d)...\n", serverURL)
+	if err := runComposeUp(ctx, composeFile); err != nil {
+		return err
+	}
+
+	deadline := time.Now().Add(startupTimeout)
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("gateway did not become healthy within %s — check `docker compose -f %s logs gateway`",
+				startupTimeout, composeFile)
+		}
+		if _, err := probe.Health(ctx); err == nil {
+			fmt.Fprintln(os.Stderr, "Backing services are up.")
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func runComposeUp(ctx context.Context, composeFile string) error {
+	var cmd *exec.Cmd
+	if _, err := exec.LookPath("docker"); err == nil {
+		cmd = exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "up", "-d")
+	} else if _, err := exec.LookPath("docker-compose"); err == nil {
+		cmd = exec.CommandContext(ctx, "docker-compose", "-f", composeFile, "up", "-d")
+	} else {
+		return fmt.Errorf("neither `docker` nor `docker-compose` was found on PATH; install Docker or start the backing services manually")
+	}
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker compose up failed: %w\n%s", err, out.String())
+	}
+	return nil
+}
+
+// waitForDevToken polls for the gateway's bootstrapped dev-token file to appear.
+func waitForDevToken(ctx context.Context, path string, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			if token := strings.TrimSpace(string(data)); token != "" {
+				return token, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return "", err
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+// spawnLocalWorker starts worker/main.py as a child process and returns a func to stop it.
+func spawnLocalWorker(ctx context.Context, projectDir, orchestratorURL, gpuProfile string) (stop func(), err error) {
+	workerPort, err := cli.FreeTCPPort()
+	if err != nil {
+		return nil, fmt.Errorf("find a free port for the worker: %w", err)
+	}
+
+	var name string
+	var args []string
+	if _, lookErr := exec.LookPath("uv"); lookErr == nil {
+		name, args = "uv", []string{"run", "python", "-m", "worker.main"}
+	} else if _, lookErr := exec.LookPath("python"); lookErr == nil {
+		name, args = "python", []string{"-m", "worker.main"}
+	} else if _, lookErr := exec.LookPath("python3"); lookErr == nil {
+		name, args = "python3", []string{"-m", "worker.main"}
+	} else {
+		return nil, fmt.Errorf("none of uv, python, or python3 found on PATH; install one to let `run` spawn a worker, " +
+			"or start worker/main.py yourself and re-run")
+	}
+
+	c := exec.CommandContext(ctx, name, args...)
+	c.Dir = projectDir
+	c.Env = append(os.Environ(),
+		"ORCHESTRATOR_URL="+orchestratorURL,
+		"PORT="+strconv.Itoa(workerPort),
+		"WORKER_URL=http://127.0.0.1:"+strconv.Itoa(workerPort),
+		"GPU_PROFILE="+gpuProfile,
+	)
+
+	stop, err = startManagedProcess(c, fmt.Sprintf("local worker (%s %s)", name, strings.Join(args, " ")))
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(os.Stderr, "Started local worker (pid %d) on port %d for gpu_profile=%s\n", c.Process.Pid, workerPort, gpuProfile)
+	return stop, nil
+}
+
+// spawnRemoteWorkerSSH starts worker/main.py on gpuHost over SSH, using one SSH session
+// that both runs the remote command and carries two tunnels so the orchestrator (running
+// locally) and the remote worker can reach each other despite being on different networks:
+//   - -L localPort:127.0.0.1:workerPort  — lets the local orchestrator reach the remote
+//     worker via http://host.docker.internal:localPort (from inside its container).
+//   - -R remotePort:127.0.0.1:orchestratorPort — lets the remote worker reach back to the
+//     local orchestrator via http://localhost:remotePort.
+//
+// Killing the ssh process stops both the tunnel and (SSH's default behavior) the remote
+// command. remoteDir must already contain the repo with worker/ dependencies installed —
+// this does not provision the remote environment, only starts what's already there.
+func spawnRemoteWorkerSSH(ctx context.Context, gpuHost, remoteDir, orchestratorURL, gpuProfile string) (stop func(), err error) {
+	if _, lookErr := exec.LookPath("ssh"); lookErr != nil {
+		return nil, fmt.Errorf("`ssh` not found on PATH; required for --gpu-host")
+	}
+
+	orchestratorPort, err := portFromURL(orchestratorURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse --orchestrator port: %w", err)
+	}
+	localPort, err := cli.FreeTCPPort()
+	if err != nil {
+		return nil, fmt.Errorf("find a free local port: %w", err)
+	}
+	remotePort, err := cli.FreeTCPPort()
+	if err != nil {
+		return nil, fmt.Errorf("find a free port for the reverse tunnel: %w", err)
+	}
+	workerPort, err := cli.FreeTCPPort()
+	if err != nil {
+		return nil, fmt.Errorf("find a free port for the remote worker: %w", err)
+	}
+
+	// WORKER_URL is what the worker registers with the orchestrator and gets dispatched to —
+	// it must resolve from *inside the orchestrator's container*, not from the remote host,
+	// hence host.docker.internal:localPort (routed back through the -L tunnel) rather than
+	// the worker's own loopback address.
+	remoteCmd := fmt.Sprintf(
+		"cd %s && ORCHESTRATOR_URL=http://localhost:%d PORT=%d WORKER_URL=http://host.docker.internal:%d GPU_PROFILE=%s "+
+			"(uv run python -m worker.main || python3 -m worker.main || python -m worker.main)",
+		remoteDir, remotePort, workerPort, localPort, gpuProfile,
+	)
+	c := exec.CommandContext(ctx, "ssh",
+		"-L", fmt.Sprintf("%d:127.0.0.1:%d", localPort, workerPort),
+		"-R", fmt.Sprintf("%d:127.0.0.1:%d", remotePort, orchestratorPort),
+		gpuHost, remoteCmd,
+	)
+
+	stop, err = startManagedProcess(c, "ssh to "+gpuHost)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(os.Stderr, "Started remote worker on %s:%s (pid %d, tunneled via localhost:%d) for gpu_profile=%s\n",
+		gpuHost, remoteDir, c.Process.Pid, localPort, gpuProfile)
+	return stop, nil
+}
+
+// portFromURL extracts the port from a URL like http://localhost:8081.
+func portFromURL(rawURL string) (int, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(u.Port())
+}
+
+// startManagedProcess starts c with combined output captured, returning a stop func and
+// surfacing an immediate crash (bad deps, port in use) instead of waiting out a caller's
+// full readiness timeout.
+func startManagedProcess(c *exec.Cmd, label string) (stop func(), err error) {
+	var out bytes.Buffer
+	c.Stdout = &out
+	c.Stderr = &out
+
+	if err := c.Start(); err != nil {
+		return nil, fmt.Errorf("start %s: %w", label, err)
+	}
+
+	exited := make(chan error, 1)
+	go func() { exited <- c.Wait() }()
+
+	stop = func() {
+		select {
+		case <-exited:
+			return
+		default:
+		}
+		if c.Process != nil {
+			_ = c.Process.Kill()
+		}
+		<-exited
+	}
+
+	select {
+	case werr := <-exited:
+		return nil, fmt.Errorf("%s exited immediately (%v):\n%s", label, werr, out.String())
+	case <-time.After(500 * time.Millisecond):
+	}
+	return stop, nil
+}
+
+func waitForIdleWorker(ctx context.Context, orchClient *cli.OrchestratorClient, gpuProfile string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		hasIdle, err := orchClient.HasIdleWorker(ctx, gpuProfile)
+		if err == nil && hasIdle {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("worker did not register with the orchestrator within %s for gpu_profile=%s", timeout, gpuProfile)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
 // ── jobs ──────────────────────────────────────────────────────────────────────
 
 func newJobsCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "jobs", Short: "Manage benchmark jobs"}
 	cmd.AddCommand(newJobsListCmd())
 	cmd.AddCommand(newJobsGetCmd())
+	cmd.AddCommand(newJobsCancelCmd())
 	return cmd
 }
 
@@ -379,6 +879,24 @@ func newJobsGetCmd() *cobra.Command {
 	}
 }
 
+func newJobsCancelCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "cancel <jobID>",
+		Short: "Cancel a non-terminal job",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := apiClient.CancelJob(cmd.Context(), args[0]); err != nil {
+				return err
+			}
+			if isJSON() {
+				return json.NewEncoder(os.Stdout).Encode(map[string]bool{"cancelled": true})
+			}
+			fmt.Printf("Job %s cancelled.\n", args[0])
+			return nil
+		},
+	}
+}
+
 // ── metrics ───────────────────────────────────────────────────────────────────
 
 func newMetricsCmd() *cobra.Command {
@@ -417,12 +935,12 @@ func newMetricsCmd() *cobra.Command {
 
 func newRouteCmd() *cobra.Command {
 	var (
-		promptTokens       int
-		outputTokens       int
-		concurrency        int
-		structuredOutput   bool
-		toolCalls          bool
-		sharedPrefixRatio  float64
+		promptTokens      int
+		outputTokens      int
+		concurrency       int
+		structuredOutput  bool
+		toolCalls         bool
+		sharedPrefixRatio float64
 	)
 	cmd := &cobra.Command{
 		Use:   "route",
@@ -703,7 +1221,12 @@ func isJSON() bool {
 	return false
 }
 
+// splitCSV parses a comma-separated list, tolerating an optional wrapping
+// "[...]" (e.g. --engines "[sglang, vllm]") and surrounding whitespace.
 func splitCSV(s string) []string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "[")
+	s = strings.TrimSuffix(s, "]")
 	if s == "" {
 		return nil
 	}
@@ -731,4 +1254,3 @@ func parseSince(s string) (time.Time, error) {
 	}
 	return time.Now().Add(-d), nil
 }
-

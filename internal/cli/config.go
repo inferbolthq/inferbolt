@@ -10,6 +10,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const DefaultServerURL = "http://localhost:8080"
+
+// ErrAPIKeyNotConfigured lets callers (e.g. `inferbolt run`) distinguish a missing key,
+// which they may be able to bootstrap, from other Load failures.
+var ErrAPIKeyNotConfigured = errors.New("API key not configured; run 'inferbolt configure' or set INFERBOLT_API_KEY")
+
 // Config holds user-level InferBolt CLI settings.
 type Config struct {
 	ServerURL string `mapstructure:"server_url" yaml:"server_url"`
@@ -31,11 +37,11 @@ func Load() (*Config, error) {
 	v.SetConfigType("yaml")
 
 	v.BindEnv("server_url", "INFERBOLT_SERVER_URL") //nolint:errcheck
-	v.BindEnv("api_key", "INFERBOLT_API_KEY")        //nolint:errcheck
-	v.BindEnv("tenant_id", "INFERBOLT_TENANT_ID")    //nolint:errcheck
-	v.BindEnv("output", "INFERBOLT_OUTPUT")           //nolint:errcheck
+	v.BindEnv("api_key", "INFERBOLT_API_KEY")       //nolint:errcheck
+	v.BindEnv("tenant_id", "INFERBOLT_TENANT_ID")   //nolint:errcheck
+	v.BindEnv("output", "INFERBOLT_OUTPUT")         //nolint:errcheck
 
-	v.SetDefault("server_url", "http://localhost:8080")
+	v.SetDefault("server_url", DefaultServerURL)
 	v.SetDefault("output", "table")
 
 	_ = v.ReadInConfig() // file absence is not an error
@@ -46,7 +52,7 @@ func Load() (*Config, error) {
 	}
 
 	if cfg.APIKey == "" {
-		return nil, errors.New("API key not configured; run 'inferbolt configure' or set INFERBOLT_API_KEY")
+		return nil, ErrAPIKeyNotConfigured
 	}
 	return &cfg, nil
 }

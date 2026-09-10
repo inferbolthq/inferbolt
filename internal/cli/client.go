@@ -121,6 +121,26 @@ func (c *Client) GetJob(ctx context.Context, jobID string) (*jobs.Job, error) {
 	return &r, err
 }
 
+func (c *Client) CancelJob(ctx context.Context, jobID string) error {
+	resp, err := c.do(ctx, http.MethodDelete, "/v1/jobs/"+jobID, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		var errBody struct {
+			Error string `json:"error"`
+		}
+		json.NewDecoder(resp.Body).Decode(&errBody) //nolint:errcheck
+		msg := errBody.Error
+		if msg == "" {
+			msg = resp.Status
+		}
+		return fmt.Errorf("server error %d: %s", resp.StatusCode, msg)
+	}
+	return nil
+}
+
 func (c *Client) GetJobResults(ctx context.Context, jobID string) ([]jobs.Result, error) {
 	resp, err := c.do(ctx, http.MethodGet, "/v1/jobs/"+jobID+"/results", nil)
 	if err != nil {
