@@ -77,6 +77,7 @@ func init() {
 
 	rootCmd.AddCommand(newBenchmarkCmd())
 	rootCmd.AddCommand(newRunCmd())
+	rootCmd.AddCommand(newAgentCmd())
 	rootCmd.AddCommand(newJobsCmd())
 	rootCmd.AddCommand(newMetricsCmd())
 	rootCmd.AddCommand(newRouteCmd())

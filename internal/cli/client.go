@@ -12,6 +12,7 @@ import (
 
 	"github.com/inferbolthq/inferbolt/internal/jobs"
 	"github.com/inferbolthq/inferbolt/internal/router"
+	"github.com/inferbolthq/inferbolt/internal/workers"
 )
 
 // Client is the typed HTTP client for the InferBolt gateway.
@@ -192,6 +193,16 @@ func (c *Client) ClassifyWorkload(ctx context.Context, input router.Classificati
 	}
 	r, err := decodeResp[router.ClassificationResult](resp)
 	return &r, err
+}
+
+// ListWorkers returns the orchestrator's worker registry via the gateway's
+// authenticated proxy, so callers never need the orchestrator's internal port.
+func (c *Client) ListWorkers(ctx context.Context) ([]workers.WorkerEntry, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/v1/workers", nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodeResp[[]workers.WorkerEntry](resp)
 }
 
 func (c *Client) CreateAPIKey(ctx context.Context, tenantID string, scopes []string, expiryDays int) (*APIKeyResponse, error) {
