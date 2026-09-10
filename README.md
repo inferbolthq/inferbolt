@@ -258,7 +258,7 @@ Everything is environment variables, read once at startup.
 
 ### CLI
 
-`~/.inferbolt/config.yaml`, overridden by `INFERBOLT_SERVER_URL`, `INFERBOLT_API_KEY`, `INFERBOLT_TENANT_ID`, `INFERBOLT_OUTPUT`. The agent additionally reads `ANTHROPIC_API_KEY`.
+`~/.inferbolt/config.yaml`, overridden by `INFERBOLT_SERVER_URL`, `INFERBOLT_API_KEY`, `INFERBOLT_TENANT_ID`, `INFERBOLT_OUTPUT`. No Anthropic credential is read client-side — campaign planning happens on the orchestrator.
 
 ---
 
