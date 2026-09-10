@@ -93,7 +93,8 @@ cmd/gateway            HTTP :8080 — auth, rate limiting, validation, job submi
   └── enqueues ───────────────────────► River (durable queue, on Postgres)
                                               │
 cmd/orchestrator       :8081 ◄────────────────┘ owns the job lifecycle,
-  │                                             dispatches to workers, ingests results
+  │                                             dispatches to workers, ingests results,
+  │                                             and runs optimization campaigns
   ├── cmd/router       :8082  workload classification, engine selection
   ├── cmd/collector    :8083  metrics + drift detection, Slack alerts
   └── cmd/operator            k8s controller for the OptimizedInference CRD
@@ -121,6 +122,8 @@ Go owns all orchestration state. Python workers are stateless, scale horizontall
 
 **Budgets are hard.** Every benchmark occupies a GPU worker for minutes, so a campaign runs against a trial cap and a wall-clock cap, both checked *before* a benchmark starts. Re-requesting a configuration already measured in the campaign returns the earlier result without spending a trial. If the planner ends without concluding, the campaign still reports the cheapest error-free trial, explicitly flagged as a mechanical fallback rather than the model's judgement.
 
+**It's durable.** The loop runs in the orchestrator as a River job on its own queue, writing each step to `campaign_events` as it happens. A campaign survives the client disconnecting, records its progress for replay, and can be cancelled between trials. River retries cannot double-run one: the runner claims the row with a conditional update, and a campaign that fails is recorded as failed rather than retried with a budget it has already spent.
+
 **It plans, it doesn't measure.** Every figure in a report is read off a benchmark result row. A failed trial is handed back to the planner as an error so it can adapt, and is never cited as a measurement.
 
 | Flag | Default | Description |
@@ -135,7 +138,16 @@ Go owns all orchestration state. Python workers are stateless, scale horizontall
 
 Like `run`, `agent` starts whatever the campaign needs and isn't already up — the compose services, a local dev credential on first use, and a worker for the requested GPU profile — and stops a worker it started when the campaign ends (`--keep-worker` to leave it). `--gpu-host user@host` runs the worker on a remote GPU box over SSH.
 
-Planning uses the Anthropic API and needs `ANTHROPIC_API_KEY` (or a configured Anthropic CLI profile). `--output json` emits the full report — every trial, its configuration, its measurements, and token usage.
+**The campaign runs on the server, not in your terminal.** `agent` submits it and follows along; Ctrl-C detaches the view and leaves the work running. Reattach any time:
+
+```bash
+inferbolt campaigns list
+inferbolt campaigns follow <id>     # replays from the start, then follows
+inferbolt campaigns get <id>        # the finished report
+inferbolt campaigns cancel <id>     # stops before the next trial
+```
+
+Planning calls the Anthropic API from the **orchestrator**, so `ANTHROPIC_API_KEY` belongs in its environment — `docker-compose.yml` passes yours through, so `export ANTHROPIC_API_KEY=...` before `docker compose up` is enough. The key never reaches a client. `--output json` emits the full report — every trial, its configuration, its measurements, and token usage.
 
 To exercise the whole loop without a GPU: `--engines mock --gpu cpu`. The mock engine simulates plausible responses to configuration changes so the loop has a gradient to follow; its numbers are explicitly not measurements of anything real.
 
@@ -146,7 +158,8 @@ To exercise the whole loop without a GPU: `--engines mock --gpu cpu`. The mock e
 | Command | Purpose |
 |---|---|
 | `inferbolt run <model>` | One-shot: start everything needed, benchmark, print results |
-| `inferbolt agent "<goal>"` | Goal-directed optimization campaign |
+| `inferbolt agent "<goal>"` | Submit a goal-directed optimization campaign and follow it |
+| `inferbolt campaigns list \| get \| follow \| cancel` | Manage campaigns |
 | `inferbolt benchmark run` | Submit a single benchmark against a running stack |
 | `inferbolt benchmark compare` | Compare several engines in one job |
 | `inferbolt jobs list \| get \| cancel` | Manage jobs |
@@ -163,6 +176,11 @@ All routes except `/health` and `/dashboard` require `Authorization: Bearer <jwt
 
 | Route | Scope | Purpose |
 |---|---|---|
+| `POST /v1/campaigns` | `jobs:write` | Start an optimization campaign |
+| `DELETE /v1/campaigns/{id}` | `jobs:write` | Cancel a pending or running campaign |
+| `GET /v1/campaigns` | `jobs:read` | List campaigns (paginated) |
+| `GET /v1/campaigns/{id}` | `jobs:read` | Campaign detail and recommendation |
+| `GET /v1/campaigns/{id}/events` | `jobs:read` | Campaign progress, resumable via `?after_seq=` |
 | `POST /v1/jobs` | `jobs:write` | Submit a benchmark |
 | `DELETE /v1/jobs/{id}` | `jobs:write` | Cancel a non-terminal job |
 | `GET /v1/jobs` | `jobs:read` | List jobs (paginated) |
@@ -205,6 +223,7 @@ Everything is environment variables, read once at startup.
 | `DATABASE_URL` | _(required)_ | Postgres connection string |
 | `PORT` | `8081` | HTTP listen port |
 | `WORKER_EVICTION_INTERVAL` | `10s` | How often stale workers are evicted |
+| `ANTHROPIC_API_KEY` | _(unset)_ | Campaign planning. Benchmarks work without it; campaigns fail on their first turn |
 
 ### router
 
@@ -250,7 +269,8 @@ cmd/
   gateway/ orchestrator/ router/ collector/ operator/   # services
   inferbolt/                                            # CLI
 internal/
-  agent/        # goal-directed optimization campaigns
+  agent/        # the campaign loop: plan, measure, recommend
+  campaigns/    # durable campaigns — store, server-side platform, River worker
   auth/         # JWT issue/verify, scopes, tenant context, middleware
   cli/          # typed API client, config, agent platform adapter
   config/       # Postgres-backed job/recommendation store
@@ -263,7 +283,7 @@ internal/
   router/       # workload classifier, engine selector
   workers/      # worker registry
 worker/         # Python: engines/, cost/, search/, tests/
-migrations/     # 001…006, applied in order
+migrations/     # 001…007, applied in order
 k8s/            # CRD + Helm chart
 proto/, gen/    # gRPC definitions (no server currently wired — see Status)
 ```
@@ -284,14 +304,14 @@ Requires Go 1.24+, Python 3.11+, Docker. Python tests: `pytest` from the repo ro
 
 ## Status
 
-Working: gateway with JWT-scope auth and boundary validation, orchestrator with River dispatch and worker registry, five Python engine adapters, TimescaleDB metrics, drift detection with Slack alerts, the read-only dashboard, `inferbolt run`, and the optimization agent.
+Working: gateway with JWT-scope auth and boundary validation, orchestrator with River dispatch and worker registry, five Python engine adapters, TimescaleDB metrics, drift detection with Slack alerts, the read-only dashboard, `inferbolt run`, and durable server-side optimization campaigns.
 
 Not yet built:
 
 - **Cost model** — `worker/cost/modeler.py` computes cost per million tokens from a hardcoded GPU price table. `cost/` at the repo root is an empty scaffold.
 - **Optuna config sweep** — `worker/search/config_search.py` implements a TPE sweep with a Pareto frontier but is not wired to any caller. The agent covers the same ground with a different strategy; whether the deterministic sweep becomes a second campaign mode is undecided.
 - **gRPC** — `proto/inferx/v1` and `gen/` exist, but the server that used them was part of a dead code path removed in this branch. Nothing serves gRPC today.
-- **Dashboard** — read-only, no build step, no framework. Not a full UI.
+- **Dashboard** — the embedded `/dashboard` page is read-only, with no build step and no framework. A separate React app under `ui/` covers jobs, results and metrics but does not yet know about campaigns.
 - **Multi-replica gateway** — the rate limiter keeps buckets in process memory, so running more than one replica multiplies the effective limit. Fix before scaling out.
 - **No pre-auth rate limiting** — the only limiter runs after authentication, so unauthenticated requests (`/health`, `/dashboard`, and failed auth attempts) are unbounded. An IP limiter existed only in a code path nothing ever wired up, and went with it.
 

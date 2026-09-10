@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	iauth "github.com/inferbolthq/inferbolt/internal/auth"
+	"github.com/inferbolthq/inferbolt/internal/campaigns"
 	"github.com/inferbolthq/inferbolt/internal/gateway"
 	"github.com/inferbolthq/inferbolt/internal/jobs"
 	"github.com/inferbolthq/inferbolt/internal/queue"
@@ -61,13 +62,22 @@ func (m *mockStore) UpdateJobState(_ context.Context, _ string, _ jobs.JobState,
 }
 
 type mockQueue struct {
-	enqueueErr error
-	lastArgs   queue.BenchmarkJobArgs
+	enqueueErr      error
+	lastArgs        queue.BenchmarkJobArgs
+	campaignErr     error
+	lastCampaign    queue.CampaignJobArgs
+	campaignsQueued int
 }
 
 func (m *mockQueue) Enqueue(_ context.Context, args queue.BenchmarkJobArgs) error {
 	m.lastArgs = args
 	return m.enqueueErr
+}
+
+func (m *mockQueue) EnqueueCampaign(_ context.Context, args queue.CampaignJobArgs) error {
+	m.lastCampaign = args
+	m.campaignsQueued++
+	return m.campaignErr
 }
 
 type mockMetrics struct {
@@ -97,9 +107,93 @@ func newHandler(t *testing.T, store gateway.JobStorer, q gateway.JobQueuer, ping
 
 func newHandlerWithMetrics(t *testing.T, store gateway.JobStorer, q gateway.JobQueuer, pinger gateway.DBPinger, m gateway.MetricsReader) *gateway.Handler {
 	t.Helper()
+	return newHandlerWith(t, gateway.HandlerDeps{Jobs: store, Queue: q, Metrics: m, Pinger: pinger})
+}
+
+// newHandlerWith fills in whatever the caller left unset, so a test only names
+// the dependencies it actually exercises.
+func newHandlerWith(t *testing.T, d gateway.HandlerDeps) *gateway.Handler {
+	t.Helper()
 	c := newCache(t) // defined in middleware_test.go (same package)
-	km := iauth.NewKeyManager("test-secret-must-be-32-chars-long!!", c)
-	return gateway.NewHandler(store, q, m, km, pinger, nil, "http://localhost:9999")
+	if d.Jobs == nil {
+		d.Jobs = &mockStore{}
+	}
+	if d.Queue == nil {
+		d.Queue = &mockQueue{}
+	}
+	if d.Metrics == nil {
+		d.Metrics = &mockMetrics{}
+	}
+	if d.Campaigns == nil {
+		d.Campaigns = &mockCampaigns{}
+	}
+	if d.Pinger == nil {
+		d.Pinger = &mockPinger{}
+	}
+	d.Keys = iauth.NewKeyManager("test-secret-must-be-32-chars-long!!", c)
+	if d.OrchestratorURL == "" {
+		d.OrchestratorURL = "http://localhost:9999"
+	}
+	return gateway.NewHandler(d)
+}
+
+type mockCampaigns struct {
+	created   []campaigns.Campaign
+	stored    *campaigns.Campaign
+	events    []campaigns.Event
+	createErr error
+	getErr    error
+	cancelErr error
+
+	lastEventsAfterSeq int
+	cancelled          []string
+}
+
+func (m *mockCampaigns) Create(_ context.Context, c campaigns.Campaign) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	m.created = append(m.created, c)
+	cp := c
+	m.stored = &cp
+	return nil
+}
+
+func (m *mockCampaigns) Get(_ context.Context, id, tenantID string) (*campaigns.Campaign, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	if m.stored != nil && m.stored.ID == id && m.stored.TenantID == tenantID {
+		return m.stored, nil
+	}
+	return nil, campaigns.ErrNotFound
+}
+
+func (m *mockCampaigns) List(_ context.Context, _, _ string, _, _ int) ([]campaigns.Campaign, error) {
+	return m.created, nil
+}
+
+func (m *mockCampaigns) Count(_ context.Context, _, _ string) (int, error) {
+	return len(m.created), nil
+}
+
+func (m *mockCampaigns) Cancel(_ context.Context, id, _ string) error {
+	if m.cancelErr != nil {
+		return m.cancelErr
+	}
+	m.cancelled = append(m.cancelled, id)
+	return nil
+}
+
+func (m *mockCampaigns) Events(_ context.Context, _ string, afterSeq, _ int) ([]campaigns.Event, error) {
+	m.lastEventsAfterSeq = afterSeq
+	out := []campaigns.Event{}
+	for _, e := range m.events {
+		if e.Seq > afterSeq {
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }
 
 func withTenant(r *http.Request, tenantID string) *http.Request {
@@ -262,9 +356,7 @@ func TestListWorkers_RelaysOrchestratorResponse(t *testing.T) {
 	}))
 	defer orch.Close()
 
-	c := newCache(t)
-	km := iauth.NewKeyManager("test-secret-must-be-32-chars-long!!", c)
-	h := gateway.NewHandler(&mockStore{}, &mockQueue{}, &mockMetrics{}, km, &mockPinger{}, nil, orch.URL)
+	h := newHandlerWith(t, gateway.HandlerDeps{OrchestratorURL: orch.URL})
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/workers", nil)
 	w := httptest.NewRecorder()
@@ -275,9 +367,7 @@ func TestListWorkers_RelaysOrchestratorResponse(t *testing.T) {
 }
 
 func TestListWorkers_OrchestratorUnreachable(t *testing.T) {
-	c := newCache(t)
-	km := iauth.NewKeyManager("test-secret-must-be-32-chars-long!!", c)
-	h := gateway.NewHandler(&mockStore{}, &mockQueue{}, &mockMetrics{}, km, &mockPinger{}, nil, "http://127.0.0.1:0")
+	h := newHandlerWith(t, gateway.HandlerDeps{OrchestratorURL: "http://127.0.0.1:0"})
 
 	r := httptest.NewRequest(http.MethodGet, "/v1/workers", nil)
 	w := httptest.NewRecorder()

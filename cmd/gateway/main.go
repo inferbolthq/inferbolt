@@ -21,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel"
 
 	iauth "github.com/inferbolthq/inferbolt/internal/auth"
+	"github.com/inferbolthq/inferbolt/internal/campaigns"
 	"github.com/inferbolthq/inferbolt/internal/config"
 	"github.com/inferbolthq/inferbolt/internal/gateway"
 	"github.com/inferbolthq/inferbolt/internal/metrics"
@@ -79,7 +80,16 @@ func main() {
 	}
 	tracer := otel.Tracer("inferbolt/gateway")
 
-	h := gateway.NewHandler(store, queueClient, mw, km, pool, pool, orchestratorURL)
+	h := gateway.NewHandler(gateway.HandlerDeps{
+		Jobs:            store,
+		Queue:           queueClient,
+		Metrics:         mw,
+		Campaigns:       campaigns.NewStore(pool),
+		Keys:            km,
+		Pinger:          pool,
+		Pool:            pool,
+		OrchestratorURL: orchestratorURL,
+	})
 
 	r := chi.NewRouter()
 	r.Use(iauth.RequestIDMiddleware())
@@ -98,6 +108,8 @@ func main() {
 			r.Use(iauth.RequireScope(km, iauth.ScopeJobsWrite))
 			r.Post("/v1/jobs", h.CreateJob)
 			r.Delete("/v1/jobs/{jobID}", h.CancelJob)
+			r.Post("/v1/campaigns", h.CreateCampaign)
+			r.Delete("/v1/campaigns/{campaignID}", h.CancelCampaign)
 		})
 
 		r.Group(func(r chi.Router) {
@@ -108,6 +120,9 @@ func main() {
 			r.Post("/v1/route", h.ClassifyWorkload)
 			r.Get("/v1/engines", h.ListEngines)
 			r.Get("/v1/workers", h.ListWorkers)
+			r.Get("/v1/campaigns", h.ListCampaigns)
+			r.Get("/v1/campaigns/{campaignID}", h.GetCampaign)
+			r.Get("/v1/campaigns/{campaignID}/events", h.GetCampaignEvents)
 		})
 
 		r.Group(func(r chi.Router) {

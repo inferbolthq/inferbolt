@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 
+	"github.com/inferbolthq/inferbolt/internal/campaigns"
 	cfg "github.com/inferbolthq/inferbolt/internal/config"
 	"github.com/inferbolthq/inferbolt/internal/jobs"
 	"github.com/inferbolthq/inferbolt/internal/metrics"
@@ -74,6 +75,22 @@ func main() {
 	riverWorkers := river.NewWorkers()
 	benchmarkWorker := jobs.NewBenchmarkWorker(pool, registry, cache)
 	river.AddWorker(riverWorkers, benchmarkWorker)
+
+	// Campaigns run here rather than in the CLI so they survive a disconnect.
+	// Their planner calls the Anthropic API, so the key lives on the server now
+	// and never has to reach a client.
+	campaignStore := campaigns.NewStore(pool)
+	river.AddWorker(riverWorkers, campaigns.NewWorker(campaignStore, campaigns.PlatformDeps{
+		Jobs:     store,
+		Queue:    queueClient,
+		Metrics:  metricsWriter,
+		Registry: registry,
+		State:    campaignStore,
+	}, slog.Default()))
+
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		slog.Warn("ANTHROPIC_API_KEY is not set; benchmark jobs work but optimization campaigns will fail on their first planner turn")
+	}
 
 	// ── Background services ────────────────────────────────────────────────
 	registry.StartHeartbeatEviction(ctx, evictionInterval)

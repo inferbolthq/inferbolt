@@ -42,6 +42,16 @@ type BenchmarkJobArgs struct {
 
 func (BenchmarkJobArgs) Kind() string { return "benchmark_job" }
 
+// CampaignJobArgs runs one optimization campaign. The row in public.campaigns
+// holds the detail; only what River needs to schedule and time-box it lives here.
+type CampaignJobArgs struct {
+	CampaignID     string `json:"campaign_id"`
+	TenantID       string `json:"tenant_id"`
+	MaxDurationSec int    `json:"max_duration_sec"`
+}
+
+func (CampaignJobArgs) Kind() string { return "campaign_job" }
+
 type QueueClient struct {
 	client *river.Client[pgx.Tx]
 	pool   *pgxpool.Pool
@@ -77,11 +87,31 @@ func (q *QueueClient) Enqueue(ctx context.Context, args BenchmarkJobArgs) error 
 	return nil
 }
 
+// EnqueueCampaign schedules a campaign on its own queue. Campaigns occupy a
+// worker slot for as long as they run — hours, potentially — so they must not
+// share a pool with benchmark dispatch, which would starve it.
+//
+// MaxAttempts is 1: a campaign that failed has already spent its trial budget
+// and its planner tokens, and re-running it would spend them again.
+func (q *QueueClient) EnqueueCampaign(ctx context.Context, args CampaignJobArgs) error {
+	_, err := q.client.Insert(ctx, args, &river.InsertOpts{
+		MaxAttempts: 1,
+		Queue:       "campaigns",
+	})
+	if err != nil {
+		return fmt.Errorf("enqueue campaign job: %w", err)
+	}
+	return nil
+}
+
 // Start creates a worker-enabled River client and begins processing jobs.
 // It blocks until ctx is cancelled.
 func (q *QueueClient) Start(ctx context.Context, workers *river.Workers) error {
 	rc, err := river.NewClient[pgx.Tx](riverpgxv5.New(q.pool), &river.Config{
-		Queues:  map[string]river.QueueConfig{"benchmarks": {MaxWorkers: 10}},
+		Queues: map[string]river.QueueConfig{
+			"benchmarks": {MaxWorkers: 10},
+			"campaigns":  {MaxWorkers: 4},
+		},
 		Workers: workers,
 	})
 	if err != nil {

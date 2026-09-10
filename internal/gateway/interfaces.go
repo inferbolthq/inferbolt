@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/inferbolthq/inferbolt/internal/campaigns"
 	"github.com/inferbolthq/inferbolt/internal/jobs"
 	"github.com/inferbolthq/inferbolt/internal/queue"
 )
@@ -20,6 +21,19 @@ type JobStorer interface {
 // JobQueuer abstracts job enqueueing; satisfied by *queue.QueueClient.
 type JobQueuer interface {
 	Enqueue(ctx context.Context, args queue.BenchmarkJobArgs) error
+	EnqueueCampaign(ctx context.Context, args queue.CampaignJobArgs) error
+}
+
+// CampaignStorer abstracts campaign persistence; satisfied by *campaigns.Store.
+// Every method is tenant-scoped: the gateway never reads a campaign, or its
+// events, without the caller's tenant.
+type CampaignStorer interface {
+	Create(ctx context.Context, c campaigns.Campaign) error
+	Get(ctx context.Context, id, tenantID string) (*campaigns.Campaign, error)
+	List(ctx context.Context, tenantID, state string, limit, offset int) ([]campaigns.Campaign, error)
+	Count(ctx context.Context, tenantID, state string) (int, error)
+	Cancel(ctx context.Context, id, tenantID string) error
+	Events(ctx context.Context, campaignID string, afterSeq, limit int) ([]campaigns.Event, error)
 }
 
 // MetricsReader abstracts benchmark result queries; satisfied by *metrics.MetricsWriter.

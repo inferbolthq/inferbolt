@@ -26,6 +26,8 @@ services:
     environment:
       DATABASE_URL: postgres://inferbolt:inferbolt@postgres:5432/inferbolt
       PORT: 8081
+      # Campaign planning runs here. Benchmarks work without it; campaigns don't.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       - "8081:8081"
     # lets it reach a worker tunneled in via `inferbolt run --gpu-host` (host.docker.internal

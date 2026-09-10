@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/inferbolthq/inferbolt/internal/campaigns"
 	"github.com/inferbolthq/inferbolt/internal/jobs"
 	"github.com/inferbolthq/inferbolt/internal/router"
 	"github.com/inferbolthq/inferbolt/internal/workers"
@@ -203,6 +204,88 @@ func (c *Client) ListWorkers(ctx context.Context) ([]workers.WorkerEntry, error)
 		return nil, err
 	}
 	return decodeResp[[]workers.WorkerEntry](resp)
+}
+
+// ── Campaigns ─────────────────────────────────────────────────────────────────
+
+type CreateCampaignRequest struct {
+	Goal         string              `json:"goal"`
+	Model        string              `json:"model"`
+	Engines      []string            `json:"engines"`
+	GPUProfile   string              `json:"gpu_profile"`
+	Workload     jobs.WorkloadConfig `json:"workload"`
+	MaxTrials    int                 `json:"max_trials,omitempty"`
+	MaxDuration  string              `json:"max_duration,omitempty"`
+	PlannerModel string              `json:"planner_model,omitempty"`
+}
+
+type CampaignResponse struct {
+	CampaignID string `json:"campaign_id"`
+	State      string `json:"state"`
+}
+
+// CampaignEvents is one page of a campaign's progress, plus enough state for a
+// follower to know whether to keep polling.
+type CampaignEvents struct {
+	Events  []campaigns.Event `json:"events"`
+	LastSeq int               `json:"last_seq"`
+	State   string            `json:"state"`
+	Done    bool              `json:"done"`
+}
+
+func (c *Client) CreateCampaign(ctx context.Context, req CreateCampaignRequest) (*CampaignResponse, error) {
+	resp, err := c.do(ctx, http.MethodPost, "/v1/campaigns", req)
+	if err != nil {
+		return nil, err
+	}
+	r, err := decodeResp[CampaignResponse](resp)
+	return &r, err
+}
+
+func (c *Client) GetCampaign(ctx context.Context, id string) (*campaigns.Campaign, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/v1/campaigns/"+id, nil)
+	if err != nil {
+		return nil, err
+	}
+	r, err := decodeResp[campaigns.Campaign](resp)
+	return &r, err
+}
+
+func (c *Client) ListCampaigns(ctx context.Context, state string, limit int) ([]campaigns.Campaign, error) {
+	q := url.Values{}
+	q.Set("limit", fmt.Sprintf("%d", limit))
+	if state != "" {
+		q.Set("state", state)
+	}
+	resp, err := c.do(ctx, http.MethodGet, "/v1/campaigns?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	out, err := decodeResp[struct {
+		Campaigns []campaigns.Campaign `json:"campaigns"`
+	}](resp)
+	return out.Campaigns, err
+}
+
+// CampaignEventsAfter fetches campaign progress recorded after afterSeq.
+func (c *Client) CampaignEventsAfter(ctx context.Context, id string, afterSeq int) (*CampaignEvents, error) {
+	q := url.Values{}
+	q.Set("after_seq", fmt.Sprintf("%d", afterSeq))
+	resp, err := c.do(ctx, http.MethodGet, "/v1/campaigns/"+id+"/events?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	r, err := decodeResp[CampaignEvents](resp)
+	return &r, err
+}
+
+func (c *Client) CancelCampaign(ctx context.Context, id string) error {
+	resp, err := c.do(ctx, http.MethodDelete, "/v1/campaigns/"+id, nil)
+	if err != nil {
+		return err
+	}
+	_, err = decodeResp[map[string]bool](resp)
+	return err
 }
 
 func (c *Client) CreateAPIKey(ctx context.Context, tenantID string, scopes []string, expiryDays int) (*APIKeyResponse, error) {

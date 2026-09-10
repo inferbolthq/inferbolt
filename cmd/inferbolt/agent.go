@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -34,6 +33,7 @@ func newAgentCmd() *cobra.Command {
 		workerTimeoutSecs  int
 		gpuHost            string
 		remoteDir          string
+		detach             bool
 	)
 
 	cmd := &cobra.Command{
@@ -53,9 +53,14 @@ the docker-compose backing services, a local dev credential on first use, and a
 worker for the requested --gpu profile. A worker it started is stopped when the
 campaign ends, unless --keep-worker is set.
 
-Every benchmark occupies a GPU worker for minutes, so a campaign runs against
-a hard trial and wall-clock budget. Planning uses the Anthropic API and needs
-ANTHROPIC_API_KEY (or a configured Anthropic CLI profile) in the environment.`,
+The campaign runs on the server, not in this process: it survives a
+disconnect, and Ctrl-C detaches the view rather than stopping the work. Reattach
+with 'inferbolt campaigns follow <id>'.
+
+Every benchmark occupies a GPU worker for minutes, so a campaign runs against a
+hard trial and wall-clock budget. Planning calls the Anthropic API from the
+orchestrator, which needs ANTHROPIC_API_KEY in its environment — docker-compose
+passes yours through.`,
 		Example: `  inferbolt agent "cheapest engine for chat under 200ms p99 TTFT" \
     --model meta-llama/Llama-3.1-8B --gpu a100-80gb --engines vllm,sglang
 
@@ -66,9 +71,10 @@ ANTHROPIC_API_KEY (or a configured Anthropic CLI profile) in the environment.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			// A campaign is worth nothing without a worker: with none registered,
-			// the planner burns turns discovering it cannot measure anything.
-			// Bring up whatever is missing before spending a token.
+			// A campaign is worth nothing without a worker: with none
+			// registered, the planner burns turns discovering it cannot
+			// measure anything. Bring up whatever is missing before
+			// submitting. The campaign itself runs on the server.
 			cleanup, err := ensureStack(ctx, stackOptions{
 				projectDir:      projectDir,
 				orchestratorURL: orchestratorURLFrom(orchestratorFlag),
@@ -84,48 +90,56 @@ ANTHROPIC_API_KEY (or a configured Anthropic CLI profile) in the environment.`,
 			}
 			defer cleanup()
 
-			campaign := agent.Campaign{
+			req := cli.CreateCampaignRequest{
 				Goal:       args[0],
 				Model:      model,
-				GPUProfile: gpu,
 				Engines:    splitCSV(enginesFlag),
+				GPUProfile: gpu,
 				Workload: jobs.WorkloadConfig{
 					Concurrency:  concurrency,
 					PromptTokens: promptTokens,
 					OutputTokens: outputTokens,
 					NumRequests:  requests,
 				},
-				Budget: agent.Budget{
-					MaxTrials:   maxTrials,
-					MaxDuration: maxDuration,
-					MaxTurns:    agent.DefaultBudget().MaxTurns,
-				},
+				MaxTrials:    maxTrials,
+				MaxDuration:  maxDuration.String(),
+				PlannerModel: plannerModel,
 			}
 
-			platform := cli.NewAgentPlatform(apiClient)
-
-			opts := []agent.Option{agent.WithModel(plannerModel)}
-			if !isJSON() {
-				opts = append(opts, agent.WithObserver(renderEvent))
-				printCampaignHeader(campaign, plannerModel)
-			}
-
-			a, err := agent.New(platform, campaign, opts...)
+			created, err := apiClient.CreateCampaign(ctx, req)
 			if err != nil {
 				return err
 			}
 
-			report, runErr := a.Run(ctx)
-
-			if isJSON() {
-				if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
-					return err
+			if detach {
+				fmt.Printf("Campaign %s submitted.\n", created.CampaignID)
+				fmt.Printf("Follow it with: inferbolt campaigns follow %s\n", created.CampaignID)
+				if !keepWorker {
+					fmt.Fprintln(os.Stderr,
+						"note: --detach without --keep-worker stops a worker this command started, "+
+							"which will strand the campaign. Re-run with --keep-worker if no other worker is registered.")
 				}
-				return runErr
+				return nil
 			}
 
-			printReport(report)
-			return runErr
+			c, err := apiClient.GetCampaign(ctx, created.CampaignID)
+			if err != nil {
+				return err
+			}
+			if !isJSON() {
+				printCampaignSummary(*c)
+			}
+
+			if err := followCampaign(ctx, created.CampaignID, 0); err != nil {
+				return err
+			}
+			// Ctrl-C detaches the follower; the campaign keeps running.
+			if ctx.Err() != nil {
+				fmt.Fprintf(os.Stderr,
+					"\nDetached. The campaign continues on the server: inferbolt campaigns follow %s\n",
+					created.CampaignID)
+			}
+			return nil
 		},
 	}
 
@@ -147,20 +161,12 @@ ANTHROPIC_API_KEY (or a configured Anthropic CLI profile) in the environment.`,
 	cmd.Flags().IntVar(&workerTimeoutSecs, "worker-timeout", 90, "Seconds to wait for a spawned worker to register")
 	cmd.Flags().StringVar(&gpuHost, "gpu-host", "", "SSH target (user@host) to run the worker on instead of locally")
 	cmd.Flags().StringVar(&remoteDir, "remote-dir", "~/inferbolt", "Repo path on --gpu-host (must already have worker/ deps installed)")
+	cmd.Flags().BoolVar(&detach, "detach", false, "Submit the campaign and exit instead of following it")
 
 	cmd.MarkFlagRequired("model") //nolint:errcheck
 	cmd.MarkFlagRequired("gpu")   //nolint:errcheck
 
 	return cmd
-}
-
-func printCampaignHeader(c agent.Campaign, planner string) {
-	fmt.Printf("InferBolt agent — %s on %s\n", c.Model, c.GPUProfile)
-	fmt.Printf("Goal:     %s\n", c.Goal)
-	fmt.Printf("Engines:  %s\n", strings.Join(c.Engines, ", "))
-	fmt.Printf("Workload: %d concurrent, %d/%d tokens, %d requests\n",
-		c.Workload.Concurrency, c.Workload.PromptTokens, c.Workload.OutputTokens, c.Workload.NumRequests)
-	fmt.Printf("Budget:   %d trials, %s (planner: %s)\n\n", c.Budget.MaxTrials, c.Budget.MaxDuration, planner)
 }
 
 // renderEvent streams campaign progress. A campaign against real hardware runs

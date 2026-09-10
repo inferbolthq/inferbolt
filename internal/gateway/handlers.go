@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +23,7 @@ type Handler struct {
 	store           JobStorer
 	queue           JobQueuer
 	metrics         MetricsReader
+	campaigns       CampaignStorer
 	km              *iauth.KeyManager
 	pinger          DBPinger
 	pool            *pgxpool.Pool // used only for API key inserts
@@ -32,25 +32,34 @@ type Handler struct {
 	httpClient      *http.Client
 }
 
-// NewHandler constructs a Handler with all required dependencies.
-func NewHandler(
-	store JobStorer,
-	queue JobQueuer,
-	metrics MetricsReader,
-	km *iauth.KeyManager,
-	pinger DBPinger,
-	pool *pgxpool.Pool,
-	orchestratorURL string,
-) *Handler {
+// HandlerDeps is what the gateway needs to serve its routes. It is a struct
+// rather than a positional argument list because the list had grown to seven
+// values, two of which were the same pool passed twice for different reasons.
+type HandlerDeps struct {
+	Jobs      JobStorer
+	Queue     JobQueuer
+	Metrics   MetricsReader
+	Campaigns CampaignStorer
+	Keys      *iauth.KeyManager
+	Pinger    DBPinger
+
+	// Pool backs API key inserts only; everything else goes through an interface.
+	Pool            *pgxpool.Pool
+	OrchestratorURL string
+}
+
+// NewHandler constructs a Handler from its dependencies.
+func NewHandler(d HandlerDeps) *Handler {
 	return &Handler{
-		store:           store,
-		queue:           queue,
-		metrics:         metrics,
-		km:              km,
-		pinger:          pinger,
-		pool:            pool,
+		store:           d.Jobs,
+		queue:           d.Queue,
+		metrics:         d.Metrics,
+		campaigns:       d.Campaigns,
+		km:              d.Keys,
+		pinger:          d.Pinger,
+		pool:            d.Pool,
 		classifier:      router.Classify,
-		orchestratorURL: orchestratorURL,
+		orchestratorURL: d.OrchestratorURL,
 		httpClient:      &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -78,55 +87,6 @@ func (e apiError) Error() string { return string(e) }
 
 const errBadBody apiError = "empty or malformed request body"
 
-var validEngines = map[string]bool{
-	"vllm": true, "sglang": true, "tensorrt": true,
-	"llamacpp": true, "ollama": true, "mock": true,
-}
-
-// Quantization values are forwarded verbatim as engine CLI arguments
-// (vllm --quantization, sglang --quantization), so the set is closed.
-var validQuantizations = map[string]bool{
-	"fp8": true, "int8": true, "int4": true, "gptq": true, "awq": true,
-}
-
-// validateWorkload bounds the shape of a benchmark run. These are rejections,
-// not clamps: a caller that asks for something unrunnable should hear about it
-// rather than silently get a different benchmark than it requested. Zero
-// concurrency is the sharpest edge — it wedges the worker on an
-// asyncio.Semaphore(0) until the orchestrator's 45-minute poll timeout fires.
-func validateWorkload(w jobs.WorkloadConfig) error {
-	switch {
-	case w.Concurrency < 1 || w.Concurrency > 1024:
-		return apiError("workload.concurrency must be between 1 and 1024")
-	case w.PromptTokens < 1 || w.PromptTokens > 1_000_000:
-		return apiError("workload.prompt_tokens must be between 1 and 1000000")
-	case w.OutputTokens < 1 || w.OutputTokens > 1_000_000:
-		return apiError("workload.output_tokens must be between 1 and 1000000")
-	case w.NumRequests < 1 || w.NumRequests > 100_000:
-		return apiError("workload.num_requests must be between 1 and 100000")
-	}
-	return nil
-}
-
-// validateEngineConfig bounds the engine tuning knobs. A zero value means
-// "unset" and is left to the worker's own default, so only non-zero fields
-// are range-checked.
-func validateEngineConfig(c jobs.EngineConfig) error {
-	switch {
-	case c.Quantization != "" && !validQuantizations[c.Quantization]:
-		return apiError("unknown quantization: " + c.Quantization)
-	case c.TensorParallel < 0 || c.TensorParallel > 8:
-		return apiError("engine_config.tensor_parallel must be between 1 and 8 (0 = engine default)")
-	case c.MaxBatchSize < 0 || c.MaxBatchSize > 4096:
-		return apiError("engine_config.max_batch_size must be between 1 and 4096 (0 = engine default)")
-	case c.MaxModelLen < 0 || c.MaxModelLen > 1_048_576:
-		return apiError("engine_config.max_model_len must be between 1 and 1048576 (0 = engine default)")
-	case c.GPUMemoryUtilization < 0 || c.GPUMemoryUtilization > 1:
-		return apiError("engine_config.gpu_memory_utilization must be between 0 and 1 (0 = engine default)")
-	}
-	return nil
-}
-
 // ── POST /v1/jobs ─────────────────────────────────────────────────────────────
 
 type CreateJobRequest struct {
@@ -153,23 +113,19 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one engine is required (or set auto_route)"})
 		return
 	}
-	for _, e := range req.Engines {
-		if !validEngines[e] {
-			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "unknown engine: " + e,
-			})
-			return
-		}
+	if err := jobs.ValidateEngines(req.Engines); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
 	if req.GPUProfile == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "gpu_profile is required"})
 		return
 	}
-	if err := validateWorkload(req.Workload); err != nil {
+	if err := jobs.ValidateWorkload(req.Workload); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := validateEngineConfig(req.EngineConfig); err != nil {
+	if err := jobs.ValidateEngineConfig(req.EngineConfig); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -192,7 +148,7 @@ func (h *Handler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	tenantID := iauth.MustGetTenantID(r.Context())
 	now := time.Now().UTC()
 	job := jobs.Job{
-		ID:             newUUID(),
+		ID:             jobs.NewID(),
 		TenantID:       tenantID,
 		Model:          req.Model,
 		Engines:        req.Engines,
@@ -502,16 +458,4 @@ func queryInt(r *http.Request, key string, defaultVal, maxVal int) int {
 		return maxVal
 	}
 	return n
-}
-
-func newUUID() string {
-	b := make([]byte, 16)
-	_, _ = cryptorand.Read(b)
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return hex.EncodeToString(b[:4]) + "-" +
-		hex.EncodeToString(b[4:6]) + "-" +
-		hex.EncodeToString(b[6:8]) + "-" +
-		hex.EncodeToString(b[8:10]) + "-" +
-		hex.EncodeToString(b[10:])
 }
