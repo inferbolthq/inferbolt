@@ -26,6 +26,14 @@ func newAgentCmd() *cobra.Command {
 		maxTrials    int
 		maxDuration  time.Duration
 		plannerModel string
+
+		projectDir         string
+		orchestratorFlag   string
+		keepWorker         bool
+		startupTimeoutSecs int
+		workerTimeoutSecs  int
+		gpuHost            string
+		remoteDir          string
 	)
 
 	cmd := &cobra.Command{
@@ -40,6 +48,11 @@ recommends an engine and configuration — citing the trials that support it.
 The model, GPU profile and workload are fixed for the whole campaign so that
 trials stay comparable; the agent varies the engine and its configuration.
 
+Like 'run', this starts whatever the campaign needs and is not already running:
+the docker-compose backing services, a local dev credential on first use, and a
+worker for the requested --gpu profile. A worker it started is stopped when the
+campaign ends, unless --keep-worker is set.
+
 Every benchmark occupies a GPU worker for minutes, so a campaign runs against
 a hard trial and wall-clock budget. Planning uses the Anthropic API and needs
 ANTHROPIC_API_KEY (or a configured Anthropic CLI profile) in the environment.`,
@@ -51,6 +64,26 @@ ANTHROPIC_API_KEY (or a configured Anthropic CLI profile) in the environment.`,
     --model test-model --gpu cpu --engines mock --max-trials 4`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+
+			// A campaign is worth nothing without a worker: with none registered,
+			// the planner burns turns discovering it cannot measure anything.
+			// Bring up whatever is missing before spending a token.
+			cleanup, err := ensureStack(ctx, stackOptions{
+				projectDir:      projectDir,
+				orchestratorURL: orchestratorURLFrom(orchestratorFlag),
+				gpuProfile:      gpu,
+				gpuHost:         gpuHost,
+				remoteDir:       remoteDir,
+				keepWorker:      keepWorker,
+				startupTimeout:  time.Duration(startupTimeoutSecs) * time.Second,
+				workerTimeout:   time.Duration(workerTimeoutSecs) * time.Second,
+			})
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
 			campaign := agent.Campaign{
 				Goal:       args[0],
 				Model:      model,
@@ -82,7 +115,7 @@ ANTHROPIC_API_KEY (or a configured Anthropic CLI profile) in the environment.`,
 				return err
 			}
 
-			report, runErr := a.Run(cmd.Context())
+			report, runErr := a.Run(ctx)
 
 			if isJSON() {
 				if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
@@ -106,6 +139,14 @@ ANTHROPIC_API_KEY (or a configured Anthropic CLI profile) in the environment.`,
 	cmd.Flags().IntVar(&maxTrials, "max-trials", agent.DefaultBudget().MaxTrials, "Maximum benchmarks the agent may run")
 	cmd.Flags().DurationVar(&maxDuration, "max-duration", agent.DefaultBudget().MaxDuration, "Wall-clock limit for the campaign")
 	cmd.Flags().StringVar(&plannerModel, "planner-model", agent.DefaultModel, "Anthropic model used to plan the campaign")
+
+	cmd.Flags().StringVar(&projectDir, "project-dir", ".", "Repo root containing docker-compose.yml and worker/")
+	cmd.Flags().StringVar(&orchestratorFlag, "orchestrator", "", "Orchestrator URL for worker-availability checks (default http://localhost:8081)")
+	cmd.Flags().BoolVar(&keepWorker, "keep-worker", false, "Leave a spawned worker running after the campaign finishes")
+	cmd.Flags().IntVar(&startupTimeoutSecs, "startup-timeout", 120, "Seconds to wait for backing services to become healthy")
+	cmd.Flags().IntVar(&workerTimeoutSecs, "worker-timeout", 90, "Seconds to wait for a spawned worker to register")
+	cmd.Flags().StringVar(&gpuHost, "gpu-host", "", "SSH target (user@host) to run the worker on instead of locally")
+	cmd.Flags().StringVar(&remoteDir, "remote-dir", "~/inferbolt", "Repo path on --gpu-host (must already have worker/ deps installed)")
 
 	cmd.MarkFlagRequired("model") //nolint:errcheck
 	cmd.MarkFlagRequired("gpu")   //nolint:errcheck

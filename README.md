@@ -133,6 +133,8 @@ Go owns all orchestration state. Python workers are stateless, scale horizontall
 | `--planner-model` | `claude-opus-5` | Anthropic model used for planning |
 | `--concurrency` / `--prompt-tokens` / `--output-tokens` / `--requests` | `32` / `512` / `256` / `200` | The fixed workload |
 
+Like `run`, `agent` starts whatever the campaign needs and isn't already up — the compose services, a local dev credential on first use, and a worker for the requested GPU profile — and stops a worker it started when the campaign ends (`--keep-worker` to leave it). `--gpu-host user@host` runs the worker on a remote GPU box over SSH.
+
 Planning uses the Anthropic API and needs `ANTHROPIC_API_KEY` (or a configured Anthropic CLI profile). `--output json` emits the full report — every trial, its configuration, its measurements, and token usage.
 
 To exercise the whole loop without a GPU: `--engines mock --gpu cpu`. The mock engine simulates plausible responses to configuration changes so the loop has a gradient to follow; its numbers are explicitly not measurements of anything real.

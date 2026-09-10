@@ -44,11 +44,11 @@ var rootCmd = &cobra.Command{
 	Use:   "inferbolt",
 	Short: "InferBolt — open-source LLM inference optimization toolkit",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// configure and version work without a loaded config; run does its own
-		// bootstrap-aware config resolution (it can auto-provision a local dev
-		// credential, so a missing API key isn't necessarily fatal for it).
+		// configure and version work without a loaded config; run and agent do
+		// their own bootstrap-aware config resolution (they can auto-provision a
+		// local dev credential, so a missing API key isn't necessarily fatal).
 		name := cmd.Name()
-		if name == "configure" || name == "version" || name == "run" {
+		if name == "configure" || name == "version" || name == "run" || name == "agent" {
 			return nil
 		}
 		var err error
@@ -362,54 +362,21 @@ Examples:
 			engines := splitCSV(enginesFlag)
 
 			ctx := cmd.Context()
-			startupTimeout := time.Duration(startupTimeoutSecs) * time.Second
-			workerTimeout := time.Duration(workerTimeoutSecs) * time.Second
 
-			runCfg, err := resolveOrBootstrapConfig(ctx, projectDir, startupTimeout)
+			cleanup, err := ensureStack(ctx, stackOptions{
+				projectDir:      projectDir,
+				orchestratorURL: orchestratorURLFrom(orchestratorFlag),
+				gpuProfile:      gpu,
+				gpuHost:         gpuHost,
+				remoteDir:       remoteDir,
+				keepWorker:      keepWorker,
+				startupTimeout:  time.Duration(startupTimeoutSecs) * time.Second,
+				workerTimeout:   time.Duration(workerTimeoutSecs) * time.Second,
+			})
 			if err != nil {
 				return err
 			}
-			cfg = runCfg
-			apiClient = cfg.NewClient()
-
-			orchestratorURL := orchestratorFlag
-			if orchestratorURL == "" {
-				orchestratorURL = os.Getenv("INFERBOLT_ORCHESTRATOR_URL")
-			}
-			if orchestratorURL == "" {
-				orchestratorURL = "http://localhost:8081"
-			}
-			orchClient := cli.NewOrchestratorClient(orchestratorURL)
-
-			hasIdle, err := orchClient.HasIdleWorker(ctx, gpu)
-			if err != nil {
-				return fmt.Errorf("checking worker availability (is the orchestrator reachable at %s?): %w", orchestratorURL, err)
-			}
-
-			if !hasIdle {
-				var stopWorker func()
-				var spawnErr error
-				if gpuHost != "" {
-					fmt.Fprintf(os.Stderr, "No idle worker for gpu_profile=%s — starting one on %s...\n", gpu, gpuHost)
-					stopWorker, spawnErr = spawnRemoteWorkerSSH(ctx, gpuHost, remoteDir, orchestratorURL, gpu)
-				} else {
-					fmt.Fprintf(os.Stderr, "No idle worker for gpu_profile=%s — starting one locally...\n", gpu)
-					stopWorker, spawnErr = spawnLocalWorker(ctx, projectDir, orchestratorURL, gpu)
-				}
-				if spawnErr != nil {
-					return spawnErr
-				}
-				if !keepWorker {
-					defer stopWorker()
-				} else {
-					fmt.Fprintln(os.Stderr, "--keep-worker set: leaving the spawned worker running.")
-				}
-
-				if err := waitForIdleWorker(ctx, orchClient, gpu, workerTimeout); err != nil {
-					return err
-				}
-				fmt.Fprintln(os.Stderr, "Worker registered — submitting benchmark.")
-			}
+			defer cleanup()
 
 			req := cli.CreateJobRequest{
 				Model:   model,
@@ -428,7 +395,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("submit job: %w", err)
 			}
-			fmt.Fprintf(os.Stderr, "Watch progress at %s/dashboard\n", runCfg.ServerURL)
+			fmt.Fprintf(os.Stderr, "Watch progress at %s/dashboard\n", cfg.ServerURL)
 
 			engineLabel := strings.Join(engines, ",")
 			if jobResp.RecommendedEngine != "" {
@@ -493,6 +460,81 @@ Examples:
 	cmd.Flags().StringVar(&savePath, "save", "", "Write the full run manifest (request, state, results) as JSON to this path")
 	cmd.Flags().IntVar(&workerTimeoutSecs, "worker-timeout", 90, "Seconds to wait for a spawned worker to register")
 	return cmd
+}
+
+// stackOptions configures the bootstrap that `run` and `agent` share.
+type stackOptions struct {
+	projectDir      string
+	orchestratorURL string
+	gpuProfile      string
+	gpuHost         string
+	remoteDir       string
+	keepWorker      bool
+	startupTimeout  time.Duration
+	workerTimeout   time.Duration
+}
+
+// ensureStack takes a machine from "nothing running" to "ready to submit work":
+// it brings the docker-compose services up if the gateway is unreachable,
+// resolves or bootstraps a credential, and spawns a worker for gpuProfile if
+// none is registered. It sets the package-level cfg and apiClient.
+//
+// The returned cleanup stops only a worker this call started, and does nothing
+// when --keep-worker is set or when a worker was already registered.
+func ensureStack(ctx context.Context, o stackOptions) (func(), error) {
+	noop := func() {}
+
+	resolved, err := resolveOrBootstrapConfig(ctx, o.projectDir, o.startupTimeout)
+	if err != nil {
+		return nil, err
+	}
+	cfg = resolved
+	apiClient = cfg.NewClient()
+
+	orchClient := cli.NewOrchestratorClient(o.orchestratorURL)
+	hasIdle, err := orchClient.HasIdleWorker(ctx, o.gpuProfile)
+	if err != nil {
+		return nil, fmt.Errorf("checking worker availability (is the orchestrator reachable at %s?): %w",
+			o.orchestratorURL, err)
+	}
+	if hasIdle {
+		return noop, nil
+	}
+
+	var stopWorker func()
+	if o.gpuHost != "" {
+		fmt.Fprintf(os.Stderr, "No idle worker for gpu_profile=%s — starting one on %s...\n", o.gpuProfile, o.gpuHost)
+		stopWorker, err = spawnRemoteWorkerSSH(ctx, o.gpuHost, o.remoteDir, o.orchestratorURL, o.gpuProfile)
+	} else {
+		fmt.Fprintf(os.Stderr, "No idle worker for gpu_profile=%s — starting one locally...\n", o.gpuProfile)
+		stopWorker, err = spawnLocalWorker(ctx, o.projectDir, o.orchestratorURL, o.gpuProfile)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	cleanup := stopWorker
+	if o.keepWorker {
+		fmt.Fprintln(os.Stderr, "--keep-worker set: leaving the spawned worker running.")
+		cleanup = noop
+	}
+
+	if err := waitForIdleWorker(ctx, orchClient, o.gpuProfile, o.workerTimeout); err != nil {
+		cleanup()
+		return nil, err
+	}
+	fmt.Fprintln(os.Stderr, "Worker registered.")
+	return cleanup, nil
+}
+
+func orchestratorURLFrom(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if v := os.Getenv("INFERBOLT_ORCHESTRATOR_URL"); v != "" {
+		return v
+	}
+	return "http://localhost:8081"
 }
 
 // resolveOrBootstrapConfig loads the CLI config, bootstrapping a local dev API key
