@@ -445,6 +445,41 @@ func TestSystemPrompt_HasNoPerTurnVariance(t *testing.T) {
 
 // ── budget and selection ──────────────────────────────────────────────────────
 
+// The wall-clock cap has to stop trials through the loop, not just in isolation.
+func TestRun_StopsSubmittingTrialsOnceTheClockRunsOut(t *testing.T) {
+	p := &fakePlatform{}
+	now := time.Now()
+
+	a, _ := newTestAgent(t, p, []string{
+		msg("tool_use", benchmarkCall("t1", "vllm", "fp8", nil)),
+		msg("tool_use", benchmarkCall("t2", "vllm", "int4", nil)),
+		msg("tool_use", toolBlock("t3", toolRecommend, map[string]any{
+			"engine": "vllm", "quantization": "fp8", "reasoning": "ran out of time", "confidence": "low",
+		})),
+	}, withClock(func() time.Time { return now }))
+
+	// The first trial lands; time then runs out before the second is allowed.
+	p.resultFor = func(spec TrialSpec) jobs.Result {
+		now = now.Add(2 * time.Hour)
+		return jobs.Result{Engine: spec.Engine, TokPerSec: 3000, CostPerMTok: 0.30}
+	}
+
+	var warnings []string
+	a.observer = func(e Event) {
+		if e.Kind == EventWarn {
+			warnings = append(warnings, e.Text)
+		}
+	}
+
+	report, err := a.Run(context.Background())
+	require.NoError(t, err)
+
+	assert.Len(t, p.runs, 1, "no benchmark may start once the wall clock is spent")
+	require.NotEmpty(t, warnings)
+	assert.Contains(t, warnings[0], "time budget exhausted")
+	require.NotNil(t, report.Recommendation)
+}
+
 func TestSpend_ExhaustsOnTime(t *testing.T) {
 	now := time.Now()
 	clock := func() time.Time { return now }

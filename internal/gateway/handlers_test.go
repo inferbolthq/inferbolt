@@ -70,13 +70,18 @@ func (m *mockQueue) Enqueue(_ context.Context, args queue.BenchmarkJobArgs) erro
 	return m.enqueueErr
 }
 
-type mockMetrics struct{}
+type mockMetrics struct {
+	lastTenantID string
+	results      []jobs.Result
+}
 
 func (m *mockMetrics) QueryByJob(_ context.Context, _ string) ([]jobs.Result, error) {
 	return nil, nil
 }
-func (m *mockMetrics) QueryByEngineAndModel(_ context.Context, _, _ string, _ time.Time) ([]jobs.Result, error) {
-	return nil, nil
+
+func (m *mockMetrics) QueryByTenantEngineAndModel(_ context.Context, tenantID, _, _ string, _ time.Time) ([]jobs.Result, error) {
+	m.lastTenantID = tenantID
+	return m.results, nil
 }
 
 type mockPinger struct{ err error }
@@ -87,9 +92,14 @@ func (m *mockPinger) Ping(_ context.Context) error { return m.err }
 
 func newHandler(t *testing.T, store gateway.JobStorer, q gateway.JobQueuer, pinger gateway.DBPinger) *gateway.Handler {
 	t.Helper()
+	return newHandlerWithMetrics(t, store, q, pinger, &mockMetrics{})
+}
+
+func newHandlerWithMetrics(t *testing.T, store gateway.JobStorer, q gateway.JobQueuer, pinger gateway.DBPinger, m gateway.MetricsReader) *gateway.Handler {
+	t.Helper()
 	c := newCache(t) // defined in middleware_test.go (same package)
 	km := iauth.NewKeyManager("test-secret-must-be-32-chars-long!!", c)
-	return gateway.NewHandler(store, q, &mockMetrics{}, km, pinger, nil, "http://localhost:9999")
+	return gateway.NewHandler(store, q, m, km, pinger, nil, "http://localhost:9999")
 }
 
 func withTenant(r *http.Request, tenantID string) *http.Request {
@@ -446,4 +456,24 @@ func TestBenchmarkJobArgs_OmitsUnsetEngineConfig(t *testing.T) {
 	assert.NotContains(t, string(b), "tensor_parallel")
 	assert.NotContains(t, string(b), "max_batch_size")
 	assert.NotContains(t, string(b), "gpu_memory_utilization")
+}
+
+// ── tenant isolation ──────────────────────────────────────────────────────────
+
+// metrics.bench_results carries no tenant_id, so GET /v1/metrics used to return
+// every tenant's results for a given engine and model. Model names are public,
+// which made another tenant's throughput, cost and engine configuration
+// readable by anyone who could guess one.
+func TestGetMetrics_ScopesToTheAuthenticatedTenant(t *testing.T) {
+	m := &mockMetrics{}
+	h := newHandlerWithMetrics(t, &mockStore{}, &mockQueue{}, &mockPinger{}, m)
+
+	r := withTenant(httptest.NewRequest(http.MethodGet,
+		"/v1/metrics?engine=vllm&model=meta-llama/Llama-3.1-8B", nil), "tenant-a")
+	w := httptest.NewRecorder()
+	h.GetMetrics(w, r)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "tenant-a", m.lastTenantID,
+		"the tenant must come from the verified token, never from the request")
 }

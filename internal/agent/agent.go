@@ -173,6 +173,9 @@ func New(platform Platform, c Campaign, opts ...Option) (*Agent, error) {
 // or the budget runs out. Trials run one at a time: they contend for the same
 // GPU worker, so there is nothing to gain by overlapping them.
 func (a *Agent) Run(ctx context.Context) (*Report, error) {
+	// The wall clock runs from the first turn, not from construction.
+	a.spend.started = a.spend.now()
+
 	// A campaign that overruns its wall clock is cancelled outright, including
 	// any benchmark still in flight.
 	ctx, cancel := context.WithTimeout(ctx, a.campaign.Budget.MaxDuration)

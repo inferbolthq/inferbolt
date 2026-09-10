@@ -34,18 +34,18 @@ func (m *MetricsWriter) WriteBenchResult(ctx context.Context, r jobs.Result) err
 		return fmt.Errorf("marshal config: %w", err)
 	}
 	_, err = m.pool.Exec(ctx, insertBenchResult, pgx.NamedArgs{
-		"job_id":       r.JobID,
-		"engine":       r.Engine,
-		"model":        r.Model,
-		"ttft_p50_ms":  r.TTFTP50Ms,
-		"ttft_p99_ms":  r.TTFTP99Ms,
-		"itl_ms":       r.ITLMs,
-		"tok_per_s":    r.TokPerSec,
-		"gpu_mem_mb":   r.GPUMemMB,
-		"kv_cache_hit": r.KVCacheHit,
-		"error_rate":   r.ErrorRate,
+		"job_id":        r.JobID,
+		"engine":        r.Engine,
+		"model":         r.Model,
+		"ttft_p50_ms":   r.TTFTP50Ms,
+		"ttft_p99_ms":   r.TTFTP99Ms,
+		"itl_ms":        r.ITLMs,
+		"tok_per_s":     r.TokPerSec,
+		"gpu_mem_mb":    r.GPUMemMB,
+		"kv_cache_hit":  r.KVCacheHit,
+		"error_rate":    r.ErrorRate,
 		"cost_per_mtok": r.CostPerMTok,
-		"config":       configJSON,
+		"config":        configJSON,
 	})
 	if err != nil {
 		return fmt.Errorf("write bench result: %w", err)
@@ -61,18 +61,18 @@ func (m *MetricsWriter) WriteBenchResultBatch(ctx context.Context, results []job
 			return fmt.Errorf("marshal config for job %s: %w", r.JobID, err)
 		}
 		batch.Queue(insertBenchResult, pgx.NamedArgs{
-			"job_id":       r.JobID,
-			"engine":       r.Engine,
-			"model":        r.Model,
-			"ttft_p50_ms":  r.TTFTP50Ms,
-			"ttft_p99_ms":  r.TTFTP99Ms,
-			"itl_ms":       r.ITLMs,
-			"tok_per_s":    r.TokPerSec,
-			"gpu_mem_mb":   r.GPUMemMB,
-			"kv_cache_hit": r.KVCacheHit,
-			"error_rate":   r.ErrorRate,
+			"job_id":        r.JobID,
+			"engine":        r.Engine,
+			"model":         r.Model,
+			"ttft_p50_ms":   r.TTFTP50Ms,
+			"ttft_p99_ms":   r.TTFTP99Ms,
+			"itl_ms":        r.ITLMs,
+			"tok_per_s":     r.TokPerSec,
+			"gpu_mem_mb":    r.GPUMemMB,
+			"kv_cache_hit":  r.KVCacheHit,
+			"error_rate":    r.ErrorRate,
 			"cost_per_mtok": r.CostPerMTok,
-			"config":       configJSON,
+			"config":        configJSON,
 		})
 	}
 	br := m.pool.SendBatch(ctx, batch)
@@ -100,6 +100,32 @@ func (m *MetricsWriter) QueryByJob(ctx context.Context, jobID string) ([]jobs.Re
 	return scanResults(rows)
 }
 
+// QueryByTenantEngineAndModel returns results belonging to one tenant.
+//
+// metrics.bench_results has no tenant_id column, so ownership is established by
+// joining through public.jobs — the same pattern the recommendations table
+// requires. Every tenant-facing caller must use this, not the unscoped query
+// below.
+func (m *MetricsWriter) QueryByTenantEngineAndModel(ctx context.Context, tenantID, engine, model string, since time.Time) ([]jobs.Result, error) {
+	rows, err := m.pool.Query(ctx, `
+		SELECT b.job_id, b.engine, b.model,
+		       b.ttft_p50_ms, b.ttft_p99_ms, b.itl_ms, b.tok_per_s,
+		       b.gpu_mem_mb, b.kv_cache_hit, b.error_rate, b.cost_per_mtok, b.config
+		FROM metrics.bench_results b
+		JOIN public.jobs j ON j.id = b.job_id
+		WHERE b.engine = $1 AND b.model = $2 AND b.ts > $3 AND j.tenant_id = $4
+		ORDER BY b.ts ASC`, engine, model, since, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("query by tenant/engine/model: %w", err)
+	}
+	defer rows.Close()
+	return scanResults(rows)
+}
+
+// QueryByEngineAndModel reads across every tenant. It exists for the collector
+// and the drift detector, whose baselines are keyed by (engine, model) with no
+// tenant dimension. Never serve this from an authenticated tenant-facing route
+// — use QueryByTenantEngineAndModel.
 func (m *MetricsWriter) QueryByEngineAndModel(ctx context.Context, engine, model string, since time.Time) ([]jobs.Result, error) {
 	rows, err := m.pool.Query(ctx, `
 		SELECT job_id, engine, model,

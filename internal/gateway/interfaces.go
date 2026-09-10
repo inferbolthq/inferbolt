@@ -23,9 +23,13 @@ type JobQueuer interface {
 }
 
 // MetricsReader abstracts benchmark result queries; satisfied by *metrics.MetricsWriter.
+//
+// The engine/model query is deliberately the tenant-scoped one: the gateway
+// serves authenticated tenants, and the unscoped variant that the collector and
+// drift detector use reads across every tenant.
 type MetricsReader interface {
 	QueryByJob(ctx context.Context, jobID string) ([]jobs.Result, error)
-	QueryByEngineAndModel(ctx context.Context, engine, model string, since time.Time) ([]jobs.Result, error)
+	QueryByTenantEngineAndModel(ctx context.Context, tenantID, engine, model string, since time.Time) ([]jobs.Result, error)
 }
 
 // DBPinger abstracts a database ping; satisfied by *pgxpool.Pool.

@@ -351,7 +351,8 @@ func (h *Handler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 		since = time.Now().Add(-24 * time.Hour)
 	}
 
-	results, err := h.metrics.QueryByEngineAndModel(r.Context(), engine, model, since)
+	tenantID := iauth.MustGetTenantID(r.Context())
+	results, err := h.metrics.QueryByTenantEngineAndModel(r.Context(), tenantID, engine, model, since)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query metrics"})
 		return
