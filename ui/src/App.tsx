@@ -20,9 +20,9 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <div className="flex h-screen bg-gray-50">
+        <div className="flex h-screen bg-background text-on-surface font-body-md text-body-md">
           <Sidebar />
-          <main className="flex-1 overflow-auto p-6">
+          <main className="flex-1 overflow-auto p-space-xl">
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/jobs/:jobId" element={<JobDetail />} />

@@ -1,8 +1,15 @@
+import { useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { StopCircle } from 'lucide-react'
 import { campaignsApi, isCampaignTerminal, type Campaign } from '../api/client'
 import { useCampaign, useCampaignEvents } from '../hooks/useCampaign'
-import { StateBadge, EventRow, configSummary } from '../components/campaign'
+import {
+  StateBadge, TrialCard, NarrationRow, buildFeed, configSummary,
+} from '../components/campaign'
+import {
+  Panel, MonoLabel, Pill, Fact, EmptyState, ErrorText, LoadingText, Ping,
+} from '../components/ui'
 
 export default function CampaignDetail() {
   const { campaignId } = useParams<{ campaignId: string }>()
@@ -11,82 +18,107 @@ export default function CampaignDetail() {
   const { data: campaign, isLoading, isError } = useCampaign(campaignId)
   const { events } = useCampaignEvents(campaignId)
 
+  const feed = useMemo(() => buildFeed(events), [events])
+
   const cancel = useMutation({
     mutationFn: () => campaignsApi.cancel(campaignId!),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['campaign', campaignId] }),
   })
 
-  if (isLoading) return <div className="text-gray-400 text-sm">Loading…</div>
-  if (isError || !campaign) return <div className="text-red-500 text-sm">Campaign not found.</div>
+  if (isLoading) return <LoadingText />
+  if (isError || !campaign) return <ErrorText>Campaign not found.</ErrorText>
 
   const running = !isCampaignTerminal(campaign.state)
-  const trialsRun = campaign.trials?.filter(t => !t.reused).length ?? countTrials(events)
+  const trialsRun = feed.filter(i => i.kind === 'trial').length
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-space-lg">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-space-lg">
         <div className="min-w-0">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold text-gray-900">{campaign.goal}</h1>
+          <div className="flex items-center gap-space-sm flex-wrap">
+            <h1 className="font-headline-lg text-headline-lg text-on-surface">{campaign.goal}</h1>
             <StateBadge state={campaign.state} />
           </div>
-          <p className="text-sm text-gray-500 mt-1">
-            {campaign.model} on {campaign.gpu_profile} · {campaign.engines.join(', ')} ·{' '}
-            <span className="font-mono text-xs">{campaign.id.slice(0, 8)}</span>
-          </p>
+          <div className="flex items-center gap-space-sm mt-1 font-code-sm text-code-sm text-on-surface-variant flex-wrap">
+            <span className="text-primary">{campaign.model}</span>
+            <span className="text-outline">/</span>
+            <span>{campaign.gpu_profile}</span>
+            <span className="text-outline">/</span>
+            <span>{campaign.engines.join(' · ')}</span>
+            <span className="text-outline">/</span>
+            <span className="text-outline">{campaign.id.slice(0, 8)}</span>
+          </div>
         </div>
+
         {running && (
           <button
             onClick={() => cancel.mutate()}
             disabled={cancel.isPending}
-            className="shrink-0 text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-50"
+            className="shrink-0 h-8 px-space-sm rounded-xl bg-surface-container-high text-on-surface-variant hover:text-error flex items-center gap-space-xs font-label-mono text-label-mono uppercase active:scale-95 transition-all disabled:opacity-50"
           >
-            {cancel.isPending ? 'Cancelling…' : 'Cancel'}
+            <StopCircle className="w-4 h-4" />
+            {cancel.isPending ? 'cancelling' : 'cancel'}
           </button>
         )}
       </div>
 
       {campaign.error_msg && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
-          {campaign.error_msg}
+        <div className="flex items-start gap-space-sm p-space-md rounded-full bg-error/10 text-error font-body-sm text-body-sm">
+          <span className="font-semibold shrink-0">Campaign failed:</span>
+          <span className="break-words">{campaign.error_msg}</span>
         </div>
       )}
 
-      {/* Budget and workload — what the campaign was allowed to do */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-        <Fact label="Trials" value={`${trialsRun} of ${campaign.budget.max_trials}`} />
-        <Fact label="Time budget" value={campaign.budget.max_duration} />
-        <Fact
-          label="Workload"
-          value={`${campaign.workload.concurrency} concurrent, ${campaign.workload.prompt_tokens}/${campaign.workload.output_tokens} tokens`}
-        />
-        <Fact label="Planner" value={campaign.planner_model} />
-      </div>
+      {/* What it was allowed to do */}
+      <Panel>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-space-lg">
+          <Fact label="trials" value={`${trialsRun} / ${campaign.budget.max_trials}`} mono />
+          <Fact label="time budget" value={campaign.budget.max_duration} mono />
+          <Fact
+            label="workload"
+            value={`${campaign.workload.concurrency}× ${campaign.workload.prompt_tokens}/${campaign.workload.output_tokens}`}
+            mono
+          />
+          <Fact label="planner" value={campaign.planner_model} mono />
+        </div>
+      </Panel>
 
-      {/* Recommendation */}
       {campaign.recommendation && <Recommendation campaign={campaign} />}
 
-      {/* Live feed */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-gray-700">Progress</h2>
-          {running && (
-            <span className="flex items-center gap-2 text-xs text-blue-600">
-              <span className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-              live
-            </span>
-          )}
+      {/* Execution feed */}
+      <div className="flex flex-col gap-space-sm">
+        <div className="flex items-center justify-between px-space-xs">
+          <div className="flex items-center gap-space-sm">
+            <MonoLabel className="text-on-surface-variant">Execution feed</MonoLabel>
+            {running && (
+              <span className="flex items-center gap-1.5">
+                <Ping tone="warning" />
+                <MonoLabel className="text-tertiary">live</MonoLabel>
+              </span>
+            )}
+          </div>
+          <MonoLabel className="text-outline">{events.length} entries</MonoLabel>
         </div>
 
-        {events.length === 0 ? (
-          <p className="text-sm text-gray-400 py-4">
-            {running ? 'Waiting for the campaign to start…' : 'No steps were recorded.'}
-          </p>
+        {feed.length === 0 ? (
+          <Panel>
+            <EmptyState>
+              {running ? 'Waiting for the campaign to start…' : 'No steps were recorded.'}
+            </EmptyState>
+          </Panel>
         ) : (
-          <ul className="divide-y divide-gray-50">
-            {events.map(e => <EventRow key={e.seq} event={e} />)}
-          </ul>
+          <div className="flex flex-col gap-space-sm">
+            {feed.map(item =>
+              item.kind === 'trial' ? (
+                <TrialCard key={item.key} trial={item.trial} />
+              ) : (
+                <ul key={item.key} className="rounded-full bg-surface-container-low">
+                  <NarrationRow event={item.event} />
+                </ul>
+              ),
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -98,72 +130,69 @@ function Recommendation({ campaign }: { campaign: Campaign }) {
   const m = rec.measured
 
   return (
-    <div className="bg-blue-50 border border-blue-200 rounded-xl p-5">
-      <div className="flex items-baseline justify-between gap-4 flex-wrap">
-        <h2 className="text-sm font-semibold text-blue-800">
-          Recommendation: {rec.engine}{' '}
-          <span className="font-mono font-normal">{configSummary(rec.engine_config)}</span>
-        </h2>
-        <span className="text-xs text-blue-600">confidence: {rec.confidence}</span>
+    <Panel className="bg-surface-container" padded={false}>
+      <div className="flex items-center justify-between gap-space-md px-space-lg py-space-md bg-surface-container-high flex-wrap">
+        <div className="flex items-center gap-space-sm min-w-0">
+          <MonoLabel className="text-secondary">Recommendation</MonoLabel>
+          <span className="font-code-lg text-code-lg text-on-surface truncate">
+            <span className="text-primary font-medium">{rec.engine}</span>{' '}
+            {configSummary(rec.engine_config)}
+          </span>
+        </div>
+        <Pill tone={rec.confidence === 'high' ? 'success' : rec.confidence === 'low' ? 'warning' : 'neutral'}>
+          {rec.confidence} confidence
+        </Pill>
       </div>
 
-      {rec.fallback && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2 inline-block">
-          Selected mechanically — the planner did not conclude within its budget.
-        </p>
-      )}
+      <div className="flex flex-col gap-space-md p-space-lg">
+        {rec.fallback && (
+          <Pill tone="warning" className="self-start normal-case">
+            selected mechanically — the planner did not conclude
+          </Pill>
+        )}
 
-      {m && (
-        <div className="flex gap-6 flex-wrap mt-3 text-sm">
-          <Headline label="throughput" value={`${m.tok_per_s.toFixed(0)} tok/s`} />
-          <Headline label="p99 TTFT" value={`${m.ttft_p99_ms.toFixed(0)} ms`} />
-          <Headline label="cost" value={`$${m.cost_per_mtok.toFixed(4)} / Mtok`} />
-        </div>
-      )}
+        {m && (
+          <div className="grid grid-cols-3 gap-space-lg">
+            <Headline label="throughput" value={m.tok_per_s.toFixed(0)} unit="tok/s" />
+            <Headline label="p99 ttft" value={m.ttft_p99_ms.toFixed(0)} unit="ms" />
+            <Headline label="cost" value={`$${m.cost_per_mtok.toFixed(4)}`} unit="/Mtok" />
+          </div>
+        )}
 
-      <p className="text-sm text-blue-900 mt-3 whitespace-pre-wrap">{rec.reasoning}</p>
+        <p className="font-body-md text-body-md text-on-surface whitespace-pre-wrap">{rec.reasoning}</p>
 
-      {rec.runner_up && (
-        <p className="text-sm text-blue-700 mt-2">
-          <span className="font-medium">Runner-up:</span> {rec.runner_up}
-        </p>
-      )}
-      {rec.caveats && (
-        <p className="text-sm text-blue-700 mt-2">
-          <span className="font-medium">Caveats:</span> {rec.caveats}
-        </p>
-      )}
+        {rec.runner_up && (
+          <div>
+            <MonoLabel className="text-on-surface-variant">Runner-up</MonoLabel>
+            <p className="font-body-md text-body-md text-on-surface-variant mt-0.5">{rec.runner_up}</p>
+          </div>
+        )}
+        {rec.caveats && (
+          <div>
+            <MonoLabel className="text-tertiary">Caveats</MonoLabel>
+            <p className="font-body-md text-body-md text-on-surface-variant mt-0.5">{rec.caveats}</p>
+          </div>
+        )}
 
-      {campaign.usage && (
-        <p className="text-xs text-blue-500 mt-4">
-          Planning: {campaign.usage.turns} turns,{' '}
-          {(campaign.usage.input_tokens + campaign.usage.output_tokens + campaign.usage.cache_read_tokens).toLocaleString()} tokens.
-        </p>
-      )}
-    </div>
+        {campaign.usage && (
+          <p className="font-code-sm text-code-sm text-outline pt-space-xs">
+            planning: {campaign.usage.turns} turns ·{' '}
+            {(campaign.usage.input_tokens + campaign.usage.output_tokens + campaign.usage.cache_read_tokens).toLocaleString()} tokens
+          </p>
+        )}
+      </div>
+    </Panel>
   )
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Headline({ label, value, unit }: { label: string; value: string; unit: string }) {
   return (
-    <div>
-      <span className="text-gray-500">{label}</span>
-      <br />
-      <span className="font-medium text-gray-800">{value}</span>
+    <div className="min-w-0">
+      <MonoLabel className="text-on-surface-variant">{label}</MonoLabel>
+      <div className="font-headline-lg text-headline-lg text-on-surface tabular-nums truncate mt-0.5">
+        {value}
+        <span className="font-code-sm text-code-sm text-on-surface-variant ml-1">{unit}</span>
+      </div>
     </div>
   )
-}
-
-function Headline({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-xs text-blue-500">{label}</div>
-      <div className="text-lg font-semibold text-blue-900 tabular-nums">{value}</div>
-    </div>
-  )
-}
-
-/** Before the campaign finishes there is no trials array yet, so count the feed. */
-function countTrials(events: { kind: string }[]): number {
-  return events.filter(e => e.kind === 'trial').length
 }

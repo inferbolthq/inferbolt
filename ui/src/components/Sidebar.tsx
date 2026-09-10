@@ -1,7 +1,8 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Briefcase, BarChart2, Cpu, Sparkles } from 'lucide-react'
+import { LayoutDashboard, Briefcase, BarChart2, Cpu, Sparkles, TerminalSquare } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { healthApi } from '../api/client'
+import { MonoLabel, Ping } from './ui'
 import clsx from 'clsx'
 
 const links = [
@@ -23,11 +24,16 @@ export default function Sidebar() {
   const connected = data?.status === 'ok' && data?.postgres === 'ok'
 
   return (
-    <nav className="w-56 bg-white border-r border-gray-200 flex flex-col py-6 px-4 shrink-0">
-      <div className="mb-8">
-        <span className="font-mono text-xl font-bold text-gray-900 tracking-tight">
-          inferbolt
-        </span>
+    <nav className="w-56 bg-surface-container-lowest flex flex-col py-space-xl px-space-md shrink-0">
+      {/* Brand block, in the mockup's mono-over-caption treatment */}
+      <div className="flex items-center gap-space-sm mb-space-xl px-space-xs">
+        <TerminalSquare className="w-5 h-5 text-primary shrink-0" />
+        <div className="flex flex-col leading-none min-w-0">
+          <MonoLabel className="text-primary">INFERBOLT</MonoLabel>
+          <span className="font-code-sm text-code-sm text-on-surface-variant truncate">
+            inference optimizer
+          </span>
+        </div>
       </div>
 
       <ul className="flex flex-col gap-1 flex-1">
@@ -38,10 +44,10 @@ export default function Sidebar() {
               end={to === '/'}
               className={({ isActive }) =>
                 clsx(
-                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                  'flex items-center gap-space-sm px-space-sm py-space-sm rounded-xl font-body-md text-body-md transition-colors',
                   isActive
-                    ? 'bg-gray-100 text-gray-900'
-                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                    ? 'bg-surface-container-high text-primary'
+                    : 'text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface',
                 )
               }
             >
@@ -52,14 +58,11 @@ export default function Sidebar() {
         ))}
       </ul>
 
-      <div className="flex items-center gap-2 text-xs text-gray-500 mt-4 px-3">
-        <span
-          className={clsx(
-            'w-2 h-2 rounded-full',
-            connected ? 'bg-green-500' : 'bg-red-400'
-          )}
-        />
-        {connected ? 'Connected' : 'Disconnected'}
+      <div className="flex items-center gap-space-xs px-space-sm py-space-xs mt-space-lg rounded-xl bg-surface-container-low">
+        <Ping tone={connected ? 'success' : 'error'} />
+        <MonoLabel className={connected ? 'text-secondary' : 'text-error'}>
+          {connected ? 'Connected' : 'Offline'}
+        </MonoLabel>
       </div>
     </nav>
   )
