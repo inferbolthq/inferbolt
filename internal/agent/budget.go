@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -19,6 +20,44 @@ type Budget struct {
 	// MaxTurns caps model round-trips, so a model that stops calling tools
 	// without concluding cannot spin. Not a cost lever — MaxTrials is.
 	MaxTurns int
+}
+
+// budgetJSON is the wire form. MaxDuration crosses as a duration string
+// ("2h0m0s") rather than the nanosecond integer a time.Duration marshals to by
+// default: it is the same spelling POST /v1/campaigns accepts for max_duration,
+// so the field reads and writes identically, and a UI can show it as-is.
+type budgetJSON struct {
+	MaxTrials   int    `json:"max_trials"`
+	MaxDuration string `json:"max_duration"`
+	MaxTurns    int    `json:"max_turns"`
+}
+
+func (b Budget) MarshalJSON() ([]byte, error) {
+	return json.Marshal(budgetJSON{
+		MaxTrials:   b.MaxTrials,
+		MaxDuration: b.MaxDuration.String(),
+		MaxTurns:    b.MaxTurns,
+	})
+}
+
+func (b *Budget) UnmarshalJSON(data []byte) error {
+	var raw budgetJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	b.MaxTrials = raw.MaxTrials
+	b.MaxTurns = raw.MaxTurns
+
+	if raw.MaxDuration == "" {
+		b.MaxDuration = 0
+		return nil
+	}
+	d, err := time.ParseDuration(raw.MaxDuration)
+	if err != nil {
+		return fmt.Errorf("budget: max_duration %q is not a duration: %w", raw.MaxDuration, err)
+	}
+	b.MaxDuration = d
+	return nil
 }
 
 // DefaultBudget is deliberately small. Six trials against real hardware is

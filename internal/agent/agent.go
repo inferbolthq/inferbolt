@@ -31,12 +31,12 @@ var ErrNoRecommendation = errors.New("agent: campaign produced no usable measure
 // for its whole duration: trials are only comparable against each other if the
 // thing being measured is the configuration and nothing else.
 type Campaign struct {
-	Goal       string
-	Model      string
-	GPUProfile string
-	Workload   jobs.WorkloadConfig
-	Engines    []string
-	Budget     Budget
+	Goal       string              `json:"goal"`
+	Model      string              `json:"model"`
+	GPUProfile string              `json:"gpu_profile"`
+	Workload   jobs.WorkloadConfig `json:"workload"`
+	Engines    []string            `json:"engines"`
+	Budget     Budget              `json:"budget"`
 }
 
 // Recommendation is the campaign's conclusion.
