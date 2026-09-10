@@ -1,8 +1,8 @@
 package drift
 
 import (
+	"math"
 	"testing"
-	"time"
 
 	"github.com/inferbolthq/inferbolt/internal/jobs"
 )
@@ -32,7 +32,7 @@ func TestComputeFromResults(t *testing.T) {
 				{TTFTP50Ms: 50, TTFTP99Ms: 90, TokPerSec: 140, GPUMemMB: 1400},
 			},
 			expectValid:    true,
-			expectedTTFT50: 30, // median of [10, 20, 30, 40, 50]
+			expectedTTFT50: 30,  // median of [10, 20, 30, 40, 50]
 			expectedTokSec: 120, // mean of [100, 110, 120, 130, 140]
 		},
 	}
@@ -93,7 +93,7 @@ func TestComputeMedian(t *testing.T) {
 
 func TestComputePercentile(t *testing.T) {
 	values := []float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
-	
+
 	tests := []struct {
 		percentile float64
 		expected   float64
@@ -107,7 +107,9 @@ func TestComputePercentile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run("", func(t *testing.T) {
 			result := computePercentile(values, tt.percentile)
-			if result != tt.expected {
+			// linear interpolation over floats (e.g. 0.95*9) doesn't always land on an
+			// exact binary representation of the mathematically expected value
+			if math.Abs(result-tt.expected) > 1e-9 {
 				t.Errorf("percentile %f: expected %f, got %f", tt.percentile, tt.expected, result)
 			}
 		})

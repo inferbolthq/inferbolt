@@ -14,12 +14,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	inferboltv1alpha1 "github.com/inferbolthq/inferbolt/k8s/crds"
@@ -132,17 +130,17 @@ func (r *OptimizedInferenceReconciler) Reconcile(ctx context.Context, req reconc
 }
 
 type BenchmarkJobRequest struct {
-	Model     string                       `json:"model"`
-	Engines   []string                     `json:"engines"`
-	Workload  BenchmarkWorkloadConfig      `json:"workload"`
-	GPUProfile string                      `json:"gpu_profile"`
+	Model      string                  `json:"model"`
+	Engines    []string                `json:"engines"`
+	Workload   BenchmarkWorkloadConfig `json:"workload"`
+	GPUProfile string                  `json:"gpu_profile"`
 }
 
 type BenchmarkWorkloadConfig struct {
-	Concurrency   int `json:"concurrency"`
-	PromptTokens  int `json:"prompt_tokens"`
-	OutputTokens  int `json:"output_tokens"`
-	NumRequests   int `json:"num_requests"`
+	Concurrency  int `json:"concurrency"`
+	PromptTokens int `json:"prompt_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	NumRequests  int `json:"num_requests"`
 }
 
 type BenchmarkJobResponse struct {
@@ -252,8 +250,8 @@ func (r *OptimizedInferenceReconciler) applyOptimization(ctx context.Context, oi
 	oi.Spec.TensorParallel = result.TensorParallel
 	oi.Spec.MaxBatchSize = result.MaxBatchSize
 
-	slog.Info("applied optimization", 
-		"resource", oi.Name, 
+	slog.Info("applied optimization",
+		"resource", oi.Name,
 		"quantization", result.Quantization,
 		"tensor_parallel", result.TensorParallel,
 		"max_batch_size", result.MaxBatchSize)
@@ -269,7 +267,7 @@ func (r *OptimizedInferenceReconciler) reconcileDeployment(ctx context.Context, 
 		},
 	}
 
-	return ctrl.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+	result, err := ctrl.CreateOrUpdate(ctx, r.Client, deployment, func() error {
 		// Set owner reference for garbage collection
 		if err := ctrl.SetControllerReference(oi, deployment, r.Scheme()); err != nil {
 			return err
@@ -329,6 +327,11 @@ func (r *OptimizedInferenceReconciler) reconcileDeployment(ctx context.Context, 
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	slog.Info("reconciled deployment", "resource", oi.Name, "operation", result)
+	return nil
 }
 
 func (r *OptimizedInferenceReconciler) getContainerImage(engine string) string {
@@ -422,4 +425,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-
