@@ -1,11 +1,12 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Briefcase, BarChart2, Cpu } from 'lucide-react'
+import { LayoutDashboard, Briefcase, BarChart2, Cpu, Sparkles } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { healthApi } from '../api/client'
 import clsx from 'clsx'
 
 const links = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/campaigns', label: 'Campaigns', icon: Sparkles },
   { to: '/jobs', label: 'Jobs', icon: Briefcase },
   { to: '/metrics', label: 'Metrics', icon: BarChart2 },
   { to: '/engines', label: 'Engines', icon: Cpu },

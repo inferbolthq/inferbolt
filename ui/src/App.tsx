@@ -4,6 +4,8 @@ import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import JobDetail from './pages/JobDetail'
 import Metrics from './pages/Metrics'
+import Campaigns from './pages/Campaigns'
+import CampaignDetail from './pages/CampaignDetail'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,6 +26,8 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/jobs/:jobId" element={<JobDetail />} />
+              <Route path="/campaigns" element={<Campaigns />} />
+              <Route path="/campaigns/:campaignId" element={<CampaignDetail />} />
               <Route path="/metrics" element={<Metrics />} />
             </Routes>
           </main>
