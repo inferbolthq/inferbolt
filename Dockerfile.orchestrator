@@ -5,7 +5,7 @@ RUN go mod download
 COPY . .
 RUN go build -o /inferbolt-orchestrator ./cmd/orchestrator
 
-FROM alpine:3.19
+FROM alpine:3.24
 COPY --from=builder /inferbolt-orchestrator /inferbolt-orchestrator
 EXPOSE 8081
 ENTRYPOINT ["/inferbolt-orchestrator"]
