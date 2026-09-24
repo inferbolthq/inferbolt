@@ -170,13 +170,40 @@ this page to unblock, most expensive to guess wrong:
 
 ---
 
+## Before the repo goes public
+
+Done in the 2026-09-25 open-source readiness pass: community health files,
+issue/PR templates, Dependabot, golangci-lint + ruff, a CI that actually gates
+(vet, lint, race, Python, UI, compose), the InferBolt rename, the MIT/Apache
+license contradiction, and a history rewrite that dropped `.git` from 38 MB to
+1.1 MB. What is left needs a decision or an account:
+
+- [ ] **Decide the canonical remote.** `filter-repo` dropped `origin`, which was
+      `github.com/karthikkay07/inferx` — matching neither `go.mod`
+      (`github.com/inferbolthq/inferbolt`) nor the README badges. Either create
+      `inferbolthq/inferbolt`, or change `go.mod` and every import to match the
+      real home. **Nothing should be pushed until this is settled.**
+- [ ] **Set the Code of Conduct enforcement contact.** `CODE_OF_CONDUCT.md`
+      carries an explicit placeholder; a Contributor Covenant with no reporting
+      address does not function.
+- [ ] **Force-push the rewritten history**, once the remote is decided. Every
+      SHA changed. Backup bundle:
+      `~/inferbolt-backup-20260925-005208.bundle`.
+- [ ] **Enable on GitHub:** private vulnerability reporting (SECURITY.md links
+      to it), branch protection on the default branch requiring the CI jobs,
+      and Discussions (the issue template config links to it).
+- [ ] **Decide whether `master` or `feat/optimization-agent` is trunk.** Master
+      is 19 commits stale. Publishing with master as the default branch would
+      show a repo without the agent, campaigns, or the current README.
+
 ## Housekeeping
 
-- [ ] Sweep remaining "InferX" references out of `QUICKSTART*.md`, `TESTING.md`,
-      `worker/models.py`, and `.claude/context/`. InferBolt is canonical.
 - [ ] CLAUDE.md §2 cites `internal/gateway/handler/response.go` as the shared
       response envelope; that file was deleted 2026-09-10. The charter is the
-      user's file — needs their say-so to edit.
+      user's file — needs their say-so to edit. Related: every handler now
+      hand-rolls its own JSON shape, tracked in `memory/technical-debt.md`.
+- [ ] Ratify or reject the `revive` doc-comment exclusion for `internal/`, which
+      deviates from CLAUDE.md §2. See `memory/technical-debt.md`.
 - [ ] Regression test asserting `"mock"` is in the gateway's engine allowlist
       (`known-bugs.md` records this as a `fixed-no-regression-test` gap).
 
