@@ -32,4 +32,18 @@ Thumbs.db
 # bootstrapped dev API key — never commit
 .inferbolt-dev/
 
-.claude/
+# Claude Code configuration. The charter, context docs, workflows, templates and
+# agent/command definitions ship: they document how this repo is meant to be
+# worked on, and are as useful to a human contributor as to an assistant.
+#
+# Session memory and the knowledge bank do not ship. memory/ is working notes
+# (current state, interview and learning progress); knowledge/ is personal
+# study material. Neither is project documentation.
+# Their READMEs ship so the charter's instructions still resolve for a fresh
+# clone; the notes themselves are per-contributor working state.
+.claude/memory/*
+!.claude/memory/README.md
+.claude/knowledge/*
+!.claude/knowledge/README.md
+
+.claude/settings.local.json
