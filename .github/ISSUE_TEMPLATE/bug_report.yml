@@ -1,0 +1,91 @@
+name: Bug report
+description: Report something that behaves incorrectly
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a report. If this is a **security vulnerability**, please
+        do not file it here — see [SECURITY.md](../blob/master/SECURITY.md) for
+        private reporting.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of the system is affected?
+      options:
+        - gateway
+        - orchestrator
+        - router
+        - collector
+        - operator (Kubernetes)
+        - CLI (inferbolt)
+        - optimization agent / campaigns
+        - Python worker
+        - dashboard / UI
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: >
+        The exact CLI invocation or HTTP request that triggers it. Redact API keys
+        and tokens.
+      placeholder: |
+        1. docker compose up -d
+        2. inferbolt run test-model --gpu cpu --engines mock
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: >
+        Logs are structured and carry `tenant_id` and `request_id`, which is usually
+        enough to trace a request end to end. Redact secrets before pasting.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Output of `inferbolt version`, or the commit SHA you built from.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Inference engine
+      options:
+        - mock
+        - vllm
+        - sglang
+        - llamacpp
+        - ollama
+        - not applicable
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Go version, Python version, and whether you ran via Docker Compose or Kubernetes.
+      placeholder: "Ubuntu 24.04, Go 1.24.2, Python 3.11, Docker Compose"
+    validations:
+      required: true
