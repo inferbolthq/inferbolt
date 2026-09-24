@@ -1,5 +1,5 @@
 """
-Shared data models for the InferX benchmark worker.
+Shared data models for the InferBolt benchmark worker.
 """
 
 from pydantic import BaseModel

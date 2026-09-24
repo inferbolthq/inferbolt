@@ -3,7 +3,7 @@
 
 set -e
 
-echo "=== InferX Operator Local Testing ==="
+echo "=== InferBolt Operator Local Testing ==="
 
 # Colors for output
 RED='\033[0;31m'
@@ -84,12 +84,12 @@ package main
 
 import (
     "testing"
-    inferxv1alpha1 "github.com/karthikkay07/inferx/k8s/crds"
+    inferboltv1alpha1 "github.com/inferbolthq/inferbolt/k8s/crds"
 )
 
 func TestOptimizedInferenceTypes(t *testing.T) {
     // Test OptimizedInference creation
-    oi := &inferxv1alpha1.OptimizedInference{}
+    oi := &inferboltv1alpha1.OptimizedInference{}
     oi.Spec.Model = "test-model"
     oi.Spec.Engine = "vllm"
     oi.Spec.GPUProfile = "a100-80gb"
@@ -109,7 +109,7 @@ func TestOptimizedInferenceTypes(t *testing.T) {
 
 func TestDeepCopy(t *testing.T) {
     // Test deep copy functionality
-    original := &inferxv1alpha1.OptimizedInference{}
+    original := &inferboltv1alpha1.OptimizedInference{}
     original.Spec.Model = "original-model"
     original.Spec.Engine = "vllm"
     
@@ -151,11 +151,11 @@ test_docker_build() {
     fi
     
     # Test build
-    if docker build -t inferx-operator:test -f Dockerfile.operator . > /dev/null; then
+    if docker build -t inferbolt-operator:test -f Dockerfile.operator . > /dev/null; then
         log_info "Operator Docker image builds successfully"
         
         # Clean up test image
-        docker rmi inferx-operator:test > /dev/null 2>&1 || true
+        docker rmi inferbolt-operator:test > /dev/null 2>&1 || true
     else
         log_error "Operator Docker image build failed"
         return 1

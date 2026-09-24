@@ -1,6 +1,15 @@
 # InferBolt
 
+[![CI](https://github.com/inferbolthq/inferbolt/actions/workflows/ci.yaml/badge.svg)](https://github.com/inferbolthq/inferbolt/actions/workflows/ci.yaml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/inferbolthq/inferbolt.svg)](https://pkg.go.dev/github.com/inferbolthq/inferbolt)
+[![Go Report Card](https://goreportcard.com/badge/github.com/inferbolthq/inferbolt)](https://goreportcard.com/report/github.com/inferbolthq/inferbolt)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Open-source LLM inference benchmarking and optimization. Run head-to-head benchmarks across vLLM, SGLang, llama.cpp and Ollama — measure TTFT, inter-token latency, throughput, KV cache hit rate and cost per million tokens — then let an agent find the configuration that best fits your workload.
+
+> **Pre-1.0 and under active development.** Interfaces and configuration may
+> change between minor versions. See [Status](#status) for what is and is not
+> built yet.
 
 ---
 
@@ -310,13 +319,27 @@ Not yet built:
 
 - **Cost model** — `worker/cost/modeler.py` computes cost per million tokens from a hardcoded GPU price table. `cost/` at the repo root is an empty scaffold.
 - **Optuna config sweep** — `worker/search/config_search.py` implements a TPE sweep with a Pareto frontier but is not wired to any caller. The agent covers the same ground with a different strategy; whether the deterministic sweep becomes a second campaign mode is undecided.
-- **gRPC** — `proto/inferx/v1` and `gen/` exist, but the server that used them was part of a dead code path removed in this branch. Nothing serves gRPC today.
-- **Dashboard** — the embedded `/dashboard` page is read-only, with no build step and no framework. A separate React app under `ui/` covers jobs, results and metrics but does not yet know about campaigns.
+- **gRPC** — `proto/inferx/v1` and `gen/` exist, but the server that used them was part of a dead code path that has since been deleted. Nothing serves gRPC today.
+- **Dashboard** — two overlapping surfaces. The embedded `/dashboard` page is read-only, with no build step and no framework; the React app under `ui/` covers jobs, results, metrics and campaigns. Which one is the product is undecided, and keeping both means maintaining both.
 - **Multi-replica gateway** — the rate limiter keeps buckets in process memory, so running more than one replica multiplies the effective limit. Fix before scaling out.
 - **No pre-auth rate limiting** — the only limiter runs after authentication, so unauthenticated requests (`/health`, `/dashboard`, and failed auth attempts) are unbounded. An IP limiter existed only in a code path nothing ever wired up, and went with it.
 
 ---
 
+## Contributing
+
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers the
+development setup, the four CI gates a change has to clear, and the conventions
+review actually enforces. Participation is governed by our
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+Found a security issue? Please do **not** open a public issue — see
+[SECURITY.md](SECURITY.md).
+
+Release history is in [CHANGELOG.md](CHANGELOG.md).
+
+---
+
 ## License
 
-Apache 2.0
+[MIT](LICENSE)

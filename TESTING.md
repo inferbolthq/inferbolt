@@ -1,6 +1,6 @@
-# InferX Testing Guide
+# InferBolt Testing Guide
 
-This guide covers how to test all components of the InferX system, including unit tests, integration tests, and end-to-end testing.
+This guide covers how to test all components of the InferBolt system, including unit tests, integration tests, and end-to-end testing.
 
 ## Prerequisites
 
@@ -68,7 +68,7 @@ docker-compose up -d postgres orchestrator
 #### Build and Run Router
 ```bash
 go build -o bin/router ./cmd/router
-export DATABASE_URL="postgres://inferx:inferx@localhost:5432/inferx"
+export DATABASE_URL="postgres://inferbolt:inferbolt@localhost:5432/inferbolt"
 export ORCHESTRATOR_URL="http://localhost:8081"
 export PORT="8082"
 ./bin/router
@@ -109,7 +109,7 @@ curl http://localhost:8082/health
 #### Build and Run Collector
 ```bash
 go build -o bin/collector ./cmd/collector
-export DATABASE_URL="postgres://inferx:inferx@localhost:5432/inferx"
+export DATABASE_URL="postgres://inferbolt:inferbolt@localhost:5432/inferbolt"
 export PORT="8083"
 export SLACK_WEBHOOK_URL=""  # Optional
 export DRIFT_CHECK_INTERVAL="1m"
@@ -137,7 +137,7 @@ curl http://localhost:8083/health
 #### Generate Test Data
 ```bash
 # Insert sample metrics to trigger drift detection
-psql postgres://inferx:inferx@localhost:5432/inferx << EOF
+psql postgres://inferbolt:inferbolt@localhost:5432/inferbolt << EOF
 INSERT INTO metrics.bench_results 
 (ts, job_id, engine, model, ttft_p50_ms, ttft_p99_ms, itl_ms, tok_per_s, gpu_mem_mb, kv_cache_hit, error_rate, cost_per_mtok, config)
 VALUES 
@@ -151,16 +151,16 @@ EOF
 #### Setup Local Kubernetes
 ```bash
 # Using k3d
-k3d cluster create inferx --agents 1
+k3d cluster create inferbolt --agents 1
 
 # Or using kind
-kind create cluster --name inferx
+kind create cluster --name inferbolt
 ```
 
 #### Install CRD
 ```bash
 kubectl apply -f k8s/crds/optimized_inference_crd.yaml
-kubectl get crd optimizedinferences.inferx.io
+kubectl get crd optimizedinferences.inferbolt.io
 ```
 
 #### Build and Deploy Operator
@@ -169,7 +169,7 @@ kubectl get crd optimizedinferences.inferx.io
 go build -o bin/operator ./cmd/operator
 
 # Create Docker image (optional)
-docker build -t inferx-operator:latest -f Dockerfile.operator .
+docker build -t inferbolt-operator:latest -f Dockerfile.operator .
 
 # Deploy with environment variables
 kubectl create secret generic operator-config \
@@ -189,10 +189,10 @@ kubectl describe optimizedinference llama3-production
 
 # Check created deployment
 kubectl get deployments
-kubectl describe deployment inferx-llama3-production
+kubectl describe deployment inferbolt-llama3-production
 
 # Check logs
-kubectl logs -l app=inferx-operator
+kubectl logs -l app=inferbolt-operator
 ```
 
 ## 3. Integration Testing
@@ -270,7 +270,7 @@ hey -n 1000 -c 10 -m POST \
 ```bash
 # Generate lots of metrics data
 for i in {1..100}; do
-  psql postgres://inferx:inferx@localhost:5432/inferx -c \
+  psql postgres://inferbolt:inferbolt@localhost:5432/inferbolt -c \
     "INSERT INTO metrics.bench_results (ts, job_id, engine, model, ttft_p50_ms, ttft_p99_ms, itl_ms, tok_per_s, gpu_mem_mb, kv_cache_hit, error_rate, cost_per_mtok, config) 
      VALUES (NOW(), 'load-$i', 'vllm', 'test-model', $((45 + RANDOM % 20)), $((120 + RANDOM % 40)), 15, $((80 + RANDOM % 20)), 12000, 0.8, 0.01, 0.05, '{}');"
 done
@@ -285,17 +285,17 @@ docker-compose up -d postgres
 sleep 10
 
 # Verify tables exist
-psql postgres://inferx:inferx@localhost:5432/inferx -c "\dt public.*"
-psql postgres://inferx:inferx@localhost:5432/inferx -c "\dt metrics.*"
+psql postgres://inferbolt:inferbolt@localhost:5432/inferbolt -c "\dt public.*"
+psql postgres://inferbolt:inferbolt@localhost:5432/inferbolt -c "\dt metrics.*"
 
 # Verify baseline table
-psql postgres://inferx:inferx@localhost:5432/inferx -c "\d public.baselines"
+psql postgres://inferbolt:inferbolt@localhost:5432/inferbolt -c "\d public.baselines"
 ```
 
 ### Data Validation
 ```bash
 # Test baseline operations
-psql postgres://inferx:inferx@localhost:5432/inferx << EOF
+psql postgres://inferbolt:inferbolt@localhost:5432/inferbolt << EOF
 -- Insert test baseline
 INSERT INTO public.baselines (engine, model, ttft_p50_ms, ttft_p99_ms, tok_per_sec, gpu_mem_mb, sample_count)
 VALUES ('vllm', 'test-model', 45.5, 120.0, 85.2, 12000, 50);
@@ -320,7 +320,7 @@ curl "http://localhost:8083/v1/metrics?engine=vllm"
 
 # Test operator with invalid CRD
 kubectl apply -f - << EOF
-apiVersion: inferx.io/v1alpha1
+apiVersion: inferbolt.io/v1alpha1
 kind: OptimizedInference
 metadata:
   name: invalid-test
@@ -347,13 +347,13 @@ docker-compose logs -f router
 docker-compose logs -f collector
 
 # View operator logs
-kubectl logs -l app=inferx-operator -f
+kubectl logs -l app=inferbolt-operator -f
 ```
 
 ### Metrics
 ```bash
 # Check database connections
-psql postgres://inferx:inferx@localhost:5432/inferx -c "SELECT count(*) FROM pg_stat_activity WHERE datname = 'inferx';"
+psql postgres://inferbolt:inferbolt@localhost:5432/inferbolt -c "SELECT count(*) FROM pg_stat_activity WHERE datname = 'inferbolt';"
 
 # Check cache performance (if accessible)
 curl http://localhost:8082/debug/cache  # If debug endpoint exists
@@ -371,9 +371,9 @@ kubectl delete -f k8s/helm/templates/operator-deployment.yaml
 kubectl delete -f k8s/crds/optimized_inference_crd.yaml
 
 # Remove cluster
-k3d cluster delete inferx
+k3d cluster delete inferbolt
 # or
-kind delete cluster --name inferx
+kind delete cluster --name inferbolt
 ```
 
 ## Makefile Targets
@@ -403,8 +403,8 @@ clean:
 dev:
 	docker-compose up -d postgres
 	sleep 10
-	DATABASE_URL="postgres://inferx:inferx@localhost:5432/inferx" go run ./cmd/router &
-	DATABASE_URL="postgres://inferx:inferx@localhost:5432/inferx" go run ./cmd/collector &
+	DATABASE_URL="postgres://inferbolt:inferbolt@localhost:5432/inferbolt" go run ./cmd/router &
+	DATABASE_URL="postgres://inferbolt:inferbolt@localhost:5432/inferbolt" go run ./cmd/collector &
 ```
 
-This comprehensive testing guide covers all aspects of testing the InferX system components.
+This comprehensive testing guide covers all aspects of testing the InferBolt system components.

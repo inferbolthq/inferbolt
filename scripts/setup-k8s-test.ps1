@@ -21,7 +21,7 @@ function Write-Error($message) {
     Write-Host "[ERROR] $message" -ForegroundColor $ColorError
 }
 
-Write-Host "=== InferX Kubernetes Test Setup ===" -ForegroundColor Cyan
+Write-Host "=== InferBolt Kubernetes Test Setup ===" -ForegroundColor Cyan
 
 # Check if kubectl is available and configured
 function Test-Kubectl {
@@ -115,20 +115,20 @@ function Install-K3d {
     }
     
     # Create k3d cluster
-    Write-Info "Creating k3d cluster 'inferx-test'..."
+    Write-Info "Creating k3d cluster 'inferbolt-test'..."
     
     # Delete existing cluster if it exists
-    k3d cluster delete inferx-test 2>$null | Out-Null
+    k3d cluster delete inferbolt-test 2>$null | Out-Null
     
     try {
         # Create new cluster
-        k3d cluster create inferx-test --agents 1 --wait --timeout 5m
+        k3d cluster create inferbolt-test --agents 1 --wait --timeout 5m
         
         # Verify cluster is ready
         kubectl cluster-info
         kubectl get nodes
         
-        Write-Info "k3d cluster 'inferx-test' created successfully"
+        Write-Info "k3d cluster 'inferbolt-test' created successfully"
         return $true
     } catch {
         Write-Error "Failed to create k3d cluster: $_"
@@ -138,7 +138,7 @@ function Install-K3d {
 
 # Install CRDs and operator
 function Install-Operator {
-    Write-Info "Installing InferX Kubernetes components..."
+    Write-Info "Installing InferBolt Kubernetes components..."
     
     # Apply CRD (skip validation initially)
     Write-Info "Installing OptimizedInference CRD..."
@@ -150,7 +150,7 @@ function Install-Operator {
         $timeout = 60
         $elapsed = 0
         do {
-            $crdReady = kubectl get crd optimizedinferences.inferx.io -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>$null
+            $crdReady = kubectl get crd optimizedinferences.inferbolt.io -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>$null
             if ($crdReady -eq "True") {
                 Write-Info "CRD is ready"
                 break
@@ -169,8 +169,8 @@ function Install-Operator {
     
     # Create namespace
     try {
-        kubectl create namespace inferx-system --dry-run=client -o yaml | kubectl apply -f -
-        Write-Info "Created namespace: inferx-system"
+        kubectl create namespace inferbolt-system --dry-run=client -o yaml | kubectl apply -f -
+        Write-Info "Created namespace: inferbolt-system"
     } catch {
         Write-Warn "Failed to create namespace, it may already exist"
     }
@@ -178,14 +178,14 @@ function Install-Operator {
     # Build operator image if needed
     if (Get-Command docker -ErrorAction SilentlyContinue) {
         Write-Info "Building operator Docker image..."
-        docker build -t inferx-operator:latest -f Dockerfile.operator .
+        docker build -t inferbolt-operator:latest -f Dockerfile.operator .
         
         # Load image into k3d cluster if using k3d
         if (Get-Command k3d -ErrorAction SilentlyContinue) {
             $clusters = k3d cluster list --no-headers 2>$null
-            if ($clusters -match "inferx-test") {
+            if ($clusters -match "inferbolt-test") {
                 Write-Info "Loading image into k3d cluster..."
-                k3d image import inferx-operator:latest -c inferx-test
+                k3d image import inferbolt-operator:latest -c inferbolt-test
             }
         }
     } else {
@@ -193,22 +193,22 @@ function Install-Operator {
     }
     
     # Apply operator deployment
-    Write-Info "Installing InferX operator..."
+    Write-Info "Installing InferBolt operator..."
     try {
         # Create a modified deployment YAML
         $deploymentContent = Get-Content k8s\helm\templates\operator-deployment.yaml -Raw
         
         # Replace Helm template variables
-        $deploymentContent = $deploymentContent -replace '\{\{ \.Release\.Namespace \}\}', 'inferx-system'
+        $deploymentContent = $deploymentContent -replace '\{\{ \.Release\.Namespace \}\}', 'inferbolt-system'
         $deploymentContent = $deploymentContent -replace '\{\{ \.Values\.orchestratorURL \| quote \}\}', '"http://host.docker.internal:8081"'
-        $deploymentContent = $deploymentContent -replace '\{\{ \.Values\.operator\.image\.repository \}\}', 'inferx-operator'
+        $deploymentContent = $deploymentContent -replace '\{\{ \.Values\.operator\.image\.repository \}\}', 'inferbolt-operator'
         $deploymentContent = $deploymentContent -replace '\{\{ \.Values\.operator\.image\.tag \}\}', 'latest'
         
         # Remove lines with remaining template functions
         $deploymentContent = ($deploymentContent -split "`n" | Where-Object { $_ -notmatch '\{\{.*include.*\}\}' }) -join "`n"
         
         # Apply the deployment
-        $deploymentContent | kubectl apply -f - --namespace=inferx-system
+        $deploymentContent | kubectl apply -f - --namespace=inferbolt-system
         
         Write-Info "Operator deployment created"
         return $true
@@ -220,7 +220,7 @@ function Install-Operator {
 
 # Test the operator
 function Test-Operator {
-    Write-Info "Testing InferX operator..."
+    Write-Info "Testing InferBolt operator..."
     
     # Apply test resource
     Write-Info "Creating OptimizedInference resource..."
@@ -243,7 +243,7 @@ function Test-Operator {
         
         # Check operator logs
         Write-Info "Recent operator logs:"
-        $operatorLogs = kubectl logs -l app=inferx-operator -n inferx-system --tail=20 2>$null
+        $operatorLogs = kubectl logs -l app=inferbolt-operator -n inferbolt-system --tail=20 2>$null
         if ($operatorLogs) {
             Write-Host $operatorLogs -ForegroundColor Gray
         } else {
@@ -264,14 +264,14 @@ function Remove-TestEnvironment {
     
     # Delete test resources
     kubectl delete optimizedinference --all --ignore-not-found=true 2>$null | Out-Null
-    kubectl delete namespace inferx-system --ignore-not-found=true 2>$null | Out-Null
+    kubectl delete namespace inferbolt-system --ignore-not-found=true 2>$null | Out-Null
     
     # Delete CRD
     kubectl delete -f k8s\crds\optimized_inference_crd.yaml --ignore-not-found=true 2>$null | Out-Null
     
     # Delete k3d cluster if it exists
     if (Get-Command k3d -ErrorAction SilentlyContinue) {
-        k3d cluster delete inferx-test 2>$null | Out-Null
+        k3d cluster delete inferbolt-test 2>$null | Out-Null
     }
     
     Write-Info "Cleanup completed"
@@ -333,13 +333,13 @@ function Check-Setup {
         Write-Info "k3d not installed"
     }
     
-    Write-Host "`n--- InferX CRDs ---" -ForegroundColor Cyan
+    Write-Host "`n--- InferBolt CRDs ---" -ForegroundColor Cyan
     try {
-        $crd = kubectl get crd optimizedinferences.inferx.io --no-headers 2>$null
+        $crd = kubectl get crd optimizedinferences.inferbolt.io --no-headers 2>$null
         if ($crd) {
-            Write-Info "InferX CRD is installed"
+            Write-Info "InferBolt CRD is installed"
         } else {
-            Write-Info "InferX CRD not found"
+            Write-Info "InferBolt CRD not found"
         }
     } catch {
         Write-Info "Cannot check CRDs (no cluster connection)"
@@ -367,7 +367,7 @@ switch ($Action.ToLower()) {
                 Write-Error "Failed to setup Kubernetes environment"
                 Write-Host "`nManual setup options:" -ForegroundColor Yellow
                 Write-Host "1. Enable Docker Desktop Kubernetes: Settings > Kubernetes > Enable" -ForegroundColor White
-                Write-Host "2. Install k3d manually and run: k3d cluster create inferx-test" -ForegroundColor White
+                Write-Host "2. Install k3d manually and run: k3d cluster create inferbolt-test" -ForegroundColor White
                 exit 1
             }
         }

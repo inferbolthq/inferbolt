@@ -1,6 +1,6 @@
-# InferX Quick Start - Windows PowerShell
+# InferBolt Quick Start - Windows PowerShell
 
-This guide is specifically for Windows users using PowerShell to test all InferX components.
+This guide is specifically for Windows users using PowerShell to test all InferBolt components.
 
 ## 🚀 Quick Setup (5 minutes)
 
@@ -67,7 +67,7 @@ VALUES
 (NOW(), 'test-2', 'vllm', 'test-model', 65.0, 160.0, 25.0, 65.0, 16000, 0.4, 0.05, 0.09, '{}');
 "@
 
-docker-compose exec -T postgres psql -U inferx -d inferx -c $insertSql
+docker-compose exec -T postgres psql -U inferbolt -d inferbolt -c $insertSql
 
 # Query metrics
 Invoke-RestMethod -Uri "http://localhost:8083/v1/metrics?engine=vllm&model=test-model&since=2024-01-01T00:00:00Z"
@@ -209,7 +209,7 @@ docker-compose logs router
 docker-compose logs collector
 
 # Check database connection
-docker-compose exec postgres psql -U inferx -d inferx -c "SELECT 1;"
+docker-compose exec postgres psql -U inferbolt -d inferbolt -c "SELECT 1;"
 ```
 
 ### Kubernetes Issues
@@ -281,7 +281,7 @@ Write-Output "Classification: $($result | ConvertTo-Json)"
 
 # 2. Insert metrics (simulate benchmark results)
 $insertSql = "INSERT INTO metrics.bench_results (ts, job_id, engine, model, ttft_p50_ms, ttft_p99_ms, itl_ms, tok_per_s, gpu_mem_mb, kv_cache_hit, error_rate, cost_per_mtok, config) VALUES (NOW(), 'e2e-test', 'vllm', 'test-model', 45.0, 120.0, 15.0, 85.0, 12000, 0.8, 0.01, 0.05, '{}');"
-docker-compose exec -T postgres psql -U inferx -d inferx -c $insertSql
+docker-compose exec -T postgres psql -U inferbolt -d inferbolt -c $insertSql
 
 # 3. Query metrics
 $since = (Get-Date).AddHours(-1).ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -344,7 +344,7 @@ go build -o bin\operator.exe .\cmd\operator
 
 **Run services manually:**
 ```powershell
-$env:DATABASE_URL="postgres://inferx:inferx@localhost:5432/inferx"
+$env:DATABASE_URL="postgres://inferbolt:inferbolt@localhost:5432/inferbolt"
 $env:ORCHESTRATOR_URL="http://localhost:8081"
 $env:PORT="8082"
 .\bin\router.exe
@@ -359,5 +359,5 @@ docker-compose restart router
 docker-compose logs -t -f collector
 
 # Execute commands in containers
-docker-compose exec postgres psql -U inferx -d inferx
+docker-compose exec postgres psql -U inferbolt -d inferbolt
 ```

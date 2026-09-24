@@ -1,9 +1,9 @@
 #!/bin/bash
-# Test environment setup script for InferX
+# Test environment setup script for InferBolt
 
 set -e
 
-echo "=== InferX Test Environment Setup ==="
+echo "=== InferBolt Test Environment Setup ==="
 
 # Colors for output
 RED='\033[0;31m'
@@ -107,7 +107,7 @@ setup_test_data() {
     # Create test configuration files
     cat > tmp/test-config.env << EOF
 # Test environment configuration
-DATABASE_URL=postgres://inferx:inferx@localhost:5432/inferx
+DATABASE_URL=postgres://inferbolt:inferbolt@localhost:5432/inferbolt
 ORCHESTRATOR_URL=http://localhost:8081
 ROUTER_PORT=8082
 COLLECTOR_PORT=8083
@@ -175,7 +175,7 @@ setup_kubernetes() {
         # Check if k3d is available
         if command -v k3d > /dev/null; then
             log_info "Creating k3d cluster for testing..."
-            k3d cluster create inferx-test --agents 1 --wait || log_warn "k3d cluster may already exist"
+            k3d cluster create inferbolt-test --agents 1 --wait || log_warn "k3d cluster may already exist"
             
             # Apply CRDs
             kubectl apply -f k8s/crds/optimized_inference_crd.yaml
@@ -183,7 +183,7 @@ setup_kubernetes() {
             log_info "Kubernetes test environment ready"
         elif command -v kind > /dev/null; then
             log_info "Creating kind cluster for testing..."
-            kind create cluster --name inferx-test || log_warn "kind cluster may already exist"
+            kind create cluster --name inferbolt-test || log_warn "kind cluster may already exist"
             
             # Apply CRDs
             kubectl apply -f k8s/crds/optimized_inference_crd.yaml
@@ -251,7 +251,7 @@ create_test_runner() {
 
 set -e
 
-echo "=== InferX Test Runner ==="
+echo "=== InferBolt Test Runner ==="
 
 # Function to run a specific test
 run_test() {
@@ -322,7 +322,7 @@ EOF
 
 # Main setup function
 main() {
-    log_info "Starting InferX test environment setup..."
+    log_info "Starting InferBolt test environment setup..."
     
     check_prerequisites
     setup_directories

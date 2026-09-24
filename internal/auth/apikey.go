@@ -28,7 +28,7 @@ const (
 	ScopeAdminAll    Scope = "admin:all"
 )
 
-// Claims embeds jwt.RegisteredClaims with InferX-specific fields.
+// Claims embeds jwt.RegisteredClaims with InferBolt-specific fields.
 type Claims struct {
 	TenantID string   `json:"tid"`
 	Scopes   []string `json:"scp"`

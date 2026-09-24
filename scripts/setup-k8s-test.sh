@@ -1,5 +1,5 @@
 #!/bin/bash
-# Kubernetes testing setup script for InferX
+# Kubernetes testing setup script for InferBolt
 
 set -e
 
@@ -66,13 +66,13 @@ setup_k3d() {
     fi
     
     # Create k3d cluster
-    log_info "Creating k3d cluster 'inferx-test'..."
+    log_info "Creating k3d cluster 'inferbolt-test'..."
     
     # Stop existing cluster if it exists
-    k3d cluster delete inferx-test > /dev/null 2>&1 || true
+    k3d cluster delete inferbolt-test > /dev/null 2>&1 || true
     
     # Create new cluster
-    k3d cluster create inferx-test \
+    k3d cluster create inferbolt-test \
         --agents 1 \
         --port "8080:80@loadbalancer" \
         --port "8443:443@loadbalancer" \
@@ -82,7 +82,7 @@ setup_k3d() {
     kubectl cluster-info
     kubectl get nodes
     
-    log_info "k3d cluster 'inferx-test' created successfully"
+    log_info "k3d cluster 'inferbolt-test' created successfully"
 }
 
 # Setup kind cluster (alternative to k3d)
@@ -110,10 +110,10 @@ setup_kind() {
     fi
     
     # Create kind cluster
-    log_info "Creating kind cluster 'inferx-test'..."
+    log_info "Creating kind cluster 'inferbolt-test'..."
     
     # Delete existing cluster if it exists
-    kind delete cluster --name inferx-test > /dev/null 2>&1 || true
+    kind delete cluster --name inferbolt-test > /dev/null 2>&1 || true
     
     # Create cluster config
     cat > /tmp/kind-config.yaml << EOF
@@ -131,17 +131,17 @@ nodes:
 EOF
 
     # Create new cluster
-    kind create cluster --name inferx-test --config /tmp/kind-config.yaml --wait 5m
+    kind create cluster --name inferbolt-test --config /tmp/kind-config.yaml --wait 5m
     
     # Set kubectl context
-    kubectl cluster-info --context kind-inferx-test
+    kubectl cluster-info --context kind-inferbolt-test
     
-    log_info "kind cluster 'inferx-test' created successfully"
+    log_info "kind cluster 'inferbolt-test' created successfully"
 }
 
 # Install CRDs and operator
 install_operator() {
-    log_info "Installing InferX Kubernetes components..."
+    log_info "Installing InferBolt Kubernetes components..."
     
     # Apply CRD (skip validation initially)
     log_info "Installing OptimizedInference CRD..."
@@ -149,34 +149,34 @@ install_operator() {
     
     # Wait for CRD to be established
     log_info "Waiting for CRD to be ready..."
-    kubectl wait --for condition=established --timeout=60s crd/optimizedinferences.inferx.io
+    kubectl wait --for condition=established --timeout=60s crd/optimizedinferences.inferbolt.io
     
     # Create namespace
-    kubectl create namespace inferx-system --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create namespace inferbolt-system --dry-run=client -o yaml | kubectl apply -f -
     
     # Apply operator deployment
-    log_info "Installing InferX operator..."
+    log_info "Installing InferBolt operator..."
     
     # Create configmap for operator configuration
     kubectl create configmap operator-config \
         --from-literal=ORCHESTRATOR_URL="http://host.docker.internal:8081" \
-        --namespace=inferx-system \
+        --namespace=inferbolt-system \
         --dry-run=client -o yaml | kubectl apply -f -
     
     # Apply operator with namespace
-    sed 's/{{ .Release.Namespace }}/inferx-system/g' k8s/helm/templates/operator-deployment.yaml | \
+    sed 's/{{ .Release.Namespace }}/inferbolt-system/g' k8s/helm/templates/operator-deployment.yaml | \
     sed 's/{{ .Values.orchestratorURL }}/http:\/\/host.docker.internal:8081/g' | \
-    sed 's/{{ .Values.operator.image.repository }}/inferx-operator/g' | \
+    sed 's/{{ .Values.operator.image.repository }}/inferbolt-operator/g' | \
     sed 's/{{ .Values.operator.image.tag }}/latest/g' | \
     sed '/{{.*}}/d' | \
-    kubectl apply -f - --namespace=inferx-system
+    kubectl apply -f - --namespace=inferbolt-system
     
     log_info "Kubernetes components installed successfully"
 }
 
 # Test the operator
 test_operator() {
-    log_info "Testing InferX operator..."
+    log_info "Testing InferBolt operator..."
     
     # Apply test resource
     log_info "Creating OptimizedInference resource..."
@@ -196,7 +196,7 @@ test_operator() {
     
     # Check operator logs
     log_info "Operator logs:"
-    kubectl logs -l app=inferx-operator -n inferx-system --tail=20 || log_warn "Operator not yet running"
+    kubectl logs -l app=inferbolt-operator -n inferbolt-system --tail=20 || log_warn "Operator not yet running"
     
     log_info "Operator test completed"
 }
@@ -206,15 +206,15 @@ build_operator_image() {
     log_info "Building operator Docker image..."
     
     # Build operator image
-    docker build -t inferx-operator:latest -f Dockerfile.operator .
+    docker build -t inferbolt-operator:latest -f Dockerfile.operator .
     
     # Load image into cluster
-    if command -v k3d > /dev/null && k3d cluster list | grep -q inferx-test; then
+    if command -v k3d > /dev/null && k3d cluster list | grep -q inferbolt-test; then
         log_info "Loading image into k3d cluster..."
-        k3d image import inferx-operator:latest -c inferx-test
-    elif command -v kind > /dev/null && kind get clusters | grep -q inferx-test; then
+        k3d image import inferbolt-operator:latest -c inferbolt-test
+    elif command -v kind > /dev/null && kind get clusters | grep -q inferbolt-test; then
         log_info "Loading image into kind cluster..."
-        kind load docker-image inferx-operator:latest --name inferx-test
+        kind load docker-image inferbolt-operator:latest --name inferbolt-test
     else
         log_warn "Cannot load image into cluster. Make sure to push to a registry for remote clusters."
     fi
@@ -226,18 +226,18 @@ cleanup() {
     
     # Delete test resources
     kubectl delete optimizedinference --all --ignore-not-found=true
-    kubectl delete namespace inferx-system --ignore-not-found=true
+    kubectl delete namespace inferbolt-system --ignore-not-found=true
     
     # Delete CRD
     kubectl delete -f k8s/crds/optimized_inference_crd.yaml --ignore-not-found=true
     
     # Delete cluster
     if command -v k3d > /dev/null; then
-        k3d cluster delete inferx-test > /dev/null 2>&1 || true
+        k3d cluster delete inferbolt-test > /dev/null 2>&1 || true
     fi
     
     if command -v kind > /dev/null; then
-        kind delete cluster --name inferx-test > /dev/null 2>&1 || true
+        kind delete cluster --name inferbolt-test > /dev/null 2>&1 || true
     fi
     
     log_info "Cleanup completed"
@@ -265,8 +265,8 @@ main() {
                     log_info "Please set up a Kubernetes cluster manually:"
                     log_info "  - Docker Desktop: Enable Kubernetes in settings"
                     log_info "  - minikube: minikube start"
-                    log_info "  - k3d: k3d cluster create inferx-test"
-                    log_info "  - kind: kind create cluster --name inferx-test"
+                    log_info "  - k3d: k3d cluster create inferbolt-test"
+                    log_info "  - kind: kind create cluster --name inferbolt-test"
                     exit 1
                 fi
             fi

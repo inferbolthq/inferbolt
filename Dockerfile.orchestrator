@@ -3,9 +3,9 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /inferx-orchestrator ./cmd/orchestrator
+RUN go build -o /inferbolt-orchestrator ./cmd/orchestrator
 
 FROM alpine:3.19
-COPY --from=builder /inferx-orchestrator /inferx-orchestrator
+COPY --from=builder /inferbolt-orchestrator /inferbolt-orchestrator
 EXPOSE 8081
-ENTRYPOINT ["/inferx-orchestrator"]
+ENTRYPOINT ["/inferbolt-orchestrator"]

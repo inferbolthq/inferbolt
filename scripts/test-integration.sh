@@ -1,9 +1,9 @@
 #!/bin/bash
-# Integration test script for InferX
+# Integration test script for InferBolt
 
 set -e
 
-echo "=== InferX Integration Tests ==="
+echo "=== InferBolt Integration Tests ==="
 
 # Colors for output
 RED='\033[0;31m'
@@ -39,16 +39,16 @@ sleep 15
 
 # Verify PostgreSQL is ready
 log_info "Verifying PostgreSQL connection..."
-if ! docker-compose exec -T postgres pg_isready -U inferx > /dev/null; then
+if ! docker-compose exec -T postgres pg_isready -U inferbolt > /dev/null; then
     log_error "PostgreSQL is not ready"
     exit 1
 fi
 
 # Check if baselines table exists
 log_info "Checking database schema..."
-docker-compose exec -T postgres psql -U inferx -d inferx -c "\d public.baselines" > /dev/null || {
+docker-compose exec -T postgres psql -U inferbolt -d inferbolt -c "\d public.baselines" > /dev/null || {
     log_warn "Baselines table not found, creating..."
-    docker-compose exec -T postgres psql -U inferx -d inferx < migrations/004_baselines.sql
+    docker-compose exec -T postgres psql -U inferbolt -d inferbolt < migrations/004_baselines.sql
 }
 
 # Test 2: Start orchestrator
@@ -148,7 +148,7 @@ log_info "Testing collector metrics API..."
 
 # Insert test data
 log_info "Inserting test metrics data..."
-docker-compose exec -T postgres psql -U inferx -d inferx << EOF
+docker-compose exec -T postgres psql -U inferbolt -d inferbolt << EOF
 INSERT INTO metrics.bench_results 
 (ts, job_id, engine, model, ttft_p50_ms, ttft_p99_ms, itl_ms, tok_per_s, gpu_mem_mb, kv_cache_hit, error_rate, cost_per_mtok, config)
 VALUES 

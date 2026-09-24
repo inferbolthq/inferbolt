@@ -99,7 +99,7 @@ func (n *Notifier) send(ctx context.Context, alert DriftAlert) error {
 		alert.CurrentValue)
 
 	message := SlackMessage{
-		Text: "🚨 InferX drift detected",
+		Text: "🚨 InferBolt drift detected",
 		Blocks: []SlackBlock{
 			{
 				Type: "section",

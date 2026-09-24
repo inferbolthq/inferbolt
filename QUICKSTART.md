@@ -1,6 +1,6 @@
-# InferX Quick Start Testing Guide
+# InferBolt Quick Start Testing Guide
 
-This guide will help you quickly test all the InferX components we've built.
+This guide will help you quickly test all the InferBolt components we've built.
 
 > **Windows Users**: See [QUICKSTART-WINDOWS.md](./QUICKSTART-WINDOWS.md) for PowerShell-specific instructions.
 
@@ -71,7 +71,7 @@ curl -X POST http://localhost:8082/v1/route \
 **Drift Detector (Collector):**
 ```bash
 # Insert test metrics data
-docker-compose exec -T postgres psql -U inferx -d inferx << EOF
+docker-compose exec -T postgres psql -U inferbolt -d inferbolt << EOF
 INSERT INTO metrics.bench_results 
 (ts, job_id, engine, model, ttft_p50_ms, ttft_p99_ms, itl_ms, tok_per_s, gpu_mem_mb, kv_cache_hit, error_rate, cost_per_mtok, config)
 VALUES 
@@ -150,8 +150,8 @@ chmod +x scripts/setup-k8s-test.sh
 kubectl apply -f k8s/crds/optimized_inference_crd.yaml --validate=false
 
 # Deploy operator (update namespace as needed)
-kubectl create namespace inferx-system
-kubectl apply -f k8s/helm/templates/operator-deployment.yaml -n inferx-system
+kubectl create namespace inferbolt-system
+kubectl apply -f k8s/helm/templates/operator-deployment.yaml -n inferbolt-system
 
 # Test with sample resource
 kubectl apply -f k8s/examples/example_optimized_inference.yaml --validate=false
@@ -182,7 +182,7 @@ make start
 make logs
 
 # Check database connection
-docker-compose exec postgres psql -U inferx -d inferx -c "SELECT 1;"
+docker-compose exec postgres psql -U inferbolt -d inferbolt -c "SELECT 1;"
 
 # Restart services
 make restart
@@ -196,7 +196,7 @@ docker-compose up -d postgres
 sleep 10
 
 # Verify tables exist
-docker-compose exec postgres psql -U inferx -d inferx -c "\dt public.*; \dt metrics.*;"
+docker-compose exec postgres psql -U inferbolt -d inferbolt -c "\dt public.*; \dt metrics.*;"
 ```
 
 ### Kubernetes Issues
@@ -216,7 +216,7 @@ This means kubectl can't connect to a Kubernetes cluster. Solutions:
 
 # Option 4: Manual cluster setup
 # Install k3d: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-k3d cluster create inferx-test --agents 1
+k3d cluster create inferbolt-test --agents 1
 
 # Then apply resources with --validate=false
 kubectl apply -f k8s/crds/optimized_inference_crd.yaml --validate=false
@@ -250,7 +250,7 @@ RESULT=$(curl -s -X POST http://localhost:8082/v1/route -d '{"prompt_tokens":512
 echo "Classification: $RESULT"
 
 # 2. Insert metrics (simulate benchmark results)
-docker-compose exec -T postgres psql -U inferx -d inferx -c "
+docker-compose exec -T postgres psql -U inferbolt -d inferbolt -c "
 INSERT INTO metrics.bench_results (ts, job_id, engine, model, ttft_p50_ms, ttft_p99_ms, itl_ms, tok_per_s, gpu_mem_mb, kv_cache_hit, error_rate, cost_per_mtok, config)
 VALUES (NOW(), 'e2e-test', 'vllm', 'test-model', 45.0, 120.0, 15.0, 85.0, 12000, 0.8, 0.01, 0.05, '{}');"
 
@@ -288,7 +288,7 @@ make stop
 make clean
 
 # Remove Kubernetes cluster (if created)
-k3d cluster delete inferx-test
+k3d cluster delete inferbolt-test
 ```
 
 ## 📝 Summary

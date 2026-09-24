@@ -21,7 +21,7 @@ function Write-Error($message) {
     Write-Host "[ERROR] $message" -ForegroundColor $ColorError
 }
 
-Write-Host "=== InferX Operator Local Testing ===" -ForegroundColor Cyan
+Write-Host "=== InferBolt Operator Local Testing ===" -ForegroundColor Cyan
 
 # Test CRD validation
 function Test-CRDValidation {
@@ -105,15 +105,15 @@ function Test-DockerBuild {
     
     try {
         Write-Info "Building Docker image (this may take a few minutes)..."
-        docker build -t inferx-operator:test -f Dockerfile.operator . 2>&1 | Out-Null
+        docker build -t inferbolt-operator:test -f Dockerfile.operator . 2>&1 | Out-Null
         
         # Check if image was created
-        $images = docker images inferx-operator:test --format "{{.Repository}}:{{.Tag}}"
-        if ($images -contains "inferx-operator:test") {
+        $images = docker images inferbolt-operator:test --format "{{.Repository}}:{{.Tag}}"
+        if ($images -contains "inferbolt-operator:test") {
             Write-Info "✓ Operator Docker image builds successfully"
             
             # Clean up test image
-            docker rmi inferx-operator:test 2>&1 | Out-Null
+            docker rmi inferbolt-operator:test 2>&1 | Out-Null
             return $true
         } else {
             Write-Error "Docker image was not created"

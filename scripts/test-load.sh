@@ -1,9 +1,9 @@
 #!/bin/bash
-# Load test script for InferX components
+# Load test script for InferBolt components
 
 set -e
 
-echo "=== InferX Load Tests ==="
+echo "=== InferBolt Load Tests ==="
 
 # Colors for output
 RED='\033[0;31m'
@@ -142,7 +142,7 @@ install_tools() {
 
 # Main load testing
 main() {
-    log_info "Starting load tests for InferX components..."
+    log_info "Starting load tests for InferBolt components..."
     
     # Install tools if needed
     install_tools
@@ -184,7 +184,7 @@ main() {
     
     # First, insert test data for metrics queries
     log_info "Inserting test data for metrics queries..."
-    docker-compose exec -T postgres psql -U inferx -d inferx << EOF > /dev/null
+    docker-compose exec -T postgres psql -U inferbolt -d inferbolt << EOF > /dev/null
 -- Insert test metrics data
 INSERT INTO metrics.bench_results 
 (ts, job_id, engine, model, ttft_p50_ms, ttft_p99_ms, itl_ms, tok_per_s, gpu_mem_mb, kv_cache_hit, error_rate, cost_per_mtok, config)
@@ -304,7 +304,7 @@ EOF
     
     # Insert large batch of metrics
     local db_start_time=$(date +%s)
-    docker-compose exec -T postgres psql -U inferx -d inferx << EOF > /dev/null
+    docker-compose exec -T postgres psql -U inferbolt -d inferbolt << EOF > /dev/null
 INSERT INTO metrics.bench_results 
 (ts, job_id, engine, model, ttft_p50_ms, ttft_p99_ms, itl_ms, tok_per_s, gpu_mem_mb, kv_cache_hit, error_rate, cost_per_mtok, config)
 SELECT 
@@ -330,7 +330,7 @@ EOF
     
     # Test query performance
     local query_start_time=$(date +%s)
-    docker-compose exec -T postgres psql -U inferx -d inferx -c "
+    docker-compose exec -T postgres psql -U inferbolt -d inferbolt -c "
         SELECT engine, model, AVG(ttft_p50_ms), AVG(tok_per_s) 
         FROM metrics.bench_results 
         WHERE job_id LIKE 'db-load-test-%' 
