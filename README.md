@@ -11,6 +11,37 @@ Open-source LLM inference benchmarking and optimization. Run head-to-head benchm
 > change between minor versions. See [Status](#status) for what is and is not
 > built yet.
 
+[Install](#install) · [Quick start](#quick-start) · [Architecture](#architecture) · [The agent](#the-agent) · [CLI](#cli) · [API](#api) · [Configuration](#configuration) · [Development](#development) · [Status](#status) · [Contributing](#contributing)
+
+---
+
+## Install
+
+The CLI is a single static binary with no runtime dependencies. Running a
+benchmark additionally needs Docker (for the backing services) and Python 3.11+
+(for the worker).
+
+**From a release** — download the archive for your platform from
+[Releases](https://github.com/inferbolthq/inferbolt/releases), verify it against
+`checksums.txt`, and put `inferbolt` on your `PATH`.
+
+**With Go 1.24+:**
+
+```bash
+go install github.com/inferbolthq/inferbolt/cmd/inferbolt@latest
+```
+
+**From source:**
+
+```bash
+git clone https://github.com/inferbolthq/inferbolt
+cd inferbolt
+make build          # binaries land in bin/
+```
+
+The services themselves run from `docker compose`, which builds them locally —
+there are no pre-published server images yet.
+
 ---
 
 ## Quick start
@@ -292,22 +323,52 @@ internal/
   router/       # workload classifier, engine selector
   workers/      # worker registry
 worker/         # Python: engines/, cost/, search/, tests/
+ui/             # React dashboard — jobs, results, metrics, campaigns
 migrations/     # 001…007, applied in order
 k8s/            # CRD + Helm chart
 proto/, gen/    # gRPC definitions (no server currently wired — see Status)
+scripts/        # integration, load and k8s test harnesses
+.claude/        # engineering charter, context docs, workflows, skills
+.github/        # CI, release, issue and PR templates, Dependabot
 ```
+
+[`.claude/CLAUDE.md`](.claude/CLAUDE.md) is the engineering charter — the
+standard code review is held to here. [`.claude/context/`](.claude/context/)
+holds the architecture, API contract, schema and roadmap docs that are not
+derivable from source.
 
 ---
 
 ## Development
 
+Requires Go 1.24+, Python 3.11+ and Docker.
+
 ```bash
-make build     # compile all cmd/ binaries
-make test      # go test ./...
-make proto     # regenerate gRPC code
+go mod download
+pip install -e '.[dev]'    # Python worker plus pytest
+
+make build                 # compile all cmd/ binaries into bin/
+make test                  # go test ./...
+make test-race             # go test -race ./...
+make test-cover            # with a coverage summary
+make test-python           # pytest worker/tests
+make lint                  # golangci-lint + ruff
+make fmt                   # gofmt + ruff format
+make proto                 # regenerate gRPC code
 ```
 
-Requires Go 1.24+, Python 3.11+, Docker. Python tests: `pytest` from the repo root (`pip install -e '.[dev]'`).
+CI runs the Go suite (build, vet, race, coverage, tidy-check), golangci-lint,
+the Python suite, the UI build, and a compose validation on every pull request.
+A change that fails any of them is not ready for review.
+
+Linting needs two tools that are not vendored:
+
+```bash
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+pip install ruff
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the conventions review enforces.
 
 ---
 
