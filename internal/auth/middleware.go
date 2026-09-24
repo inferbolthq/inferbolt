@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -49,8 +50,8 @@ func AuthMiddleware(km *KeyManager) func(http.Handler) http.Handler {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
 			claims, err := km.Verify(token)
 			if err != nil {
-				switch err {
-				case ErrTokenExpired:
+				switch {
+				case errors.Is(err, ErrTokenExpired):
 					writeJSONError(w, http.StatusUnauthorized, "token expired")
 				default:
 					writeJSONError(w, http.StatusUnauthorized, "invalid token")
@@ -108,7 +109,13 @@ func RateLimitMiddleware(cache *ristretto.Cache) func(http.Handler) http.Handler
 			retryAfter := nextMinute - time.Now().Unix()
 
 			actual, _ := buckets.LoadOrStore(bucketKey, &entry{})
-			e := actual.(*entry)
+			e, ok := actual.(*entry)
+			if !ok {
+				// Unreachable — only *entry is ever stored. Failing open beats
+				// panicking the gateway on every request in a rate-limit path.
+				next.ServeHTTP(w, r)
+				return
+			}
 
 			e.mu.Lock()
 			curr := e.count

@@ -22,7 +22,6 @@ def _model_slug(model: str) -> str:
 
 
 class LlamaCppEngine(BaseEngine):
-
     def __init__(self) -> None:
         self._proc: subprocess.Popen | None = None
         self._model: str = ""
@@ -35,10 +34,14 @@ class LlamaCppEngine(BaseEngine):
         log_path = Path(f"/tmp/inferbolt-llamacpp-{_model_slug(model)}.log")
         cmd = [
             "llama-server",
-            "--model", model,
-            "--port", str(_PORT),
-            "--ctx-size", str(config.max_model_len),
-            "--n-gpu-layers", "999",
+            "--model",
+            model,
+            "--port",
+            str(_PORT),
+            "--ctx-size",
+            str(config.max_model_len),
+            "--n-gpu-layers",
+            "999",
         ]
 
         log_file = log_path.open("w")
@@ -119,4 +122,6 @@ class LlamaCppEngine(BaseEngine):
                 output_tokens=output_tokens,
             )
         except Exception as e:
-            return RawRequestResult(ttft_ms=0.0, itl_ms=0.0, total_ms=0.0, output_tokens=0, error=str(e))
+            return RawRequestResult(
+                ttft_ms=0.0, itl_ms=0.0, total_ms=0.0, output_tokens=0, error=str(e)
+            )

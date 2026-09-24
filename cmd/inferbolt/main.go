@@ -816,7 +816,7 @@ func startManagedProcess(c *exec.Cmd, label string) (stop func(), err error) {
 
 	select {
 	case werr := <-exited:
-		return nil, fmt.Errorf("%s exited immediately (%v):\n%s", label, werr, out.String())
+		return nil, fmt.Errorf("%s exited immediately (%w):\n%s", label, werr, out.String())
 	case <-time.After(500 * time.Millisecond):
 	}
 	return stop, nil

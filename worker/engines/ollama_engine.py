@@ -15,7 +15,6 @@ _STARTUP_TIMEOUT = 30
 
 
 class OllamaEngine(BaseEngine):
-
     def __init__(self) -> None:
         self._model: str = ""
 
@@ -92,4 +91,6 @@ class OllamaEngine(BaseEngine):
                 output_tokens=output_tokens,
             )
         except Exception as e:
-            return RawRequestResult(ttft_ms=0.0, itl_ms=0.0, total_ms=0.0, output_tokens=0, error=str(e))
+            return RawRequestResult(
+                ttft_ms=0.0, itl_ms=0.0, total_ms=0.0, output_tokens=0, error=str(e)
+            )

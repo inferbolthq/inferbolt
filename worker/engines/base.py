@@ -4,9 +4,9 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 from worker.models import (
+    GPU_PRICING_PER_HOUR,
     BenchmarkResult,
     EngineConfig,
-    GPU_PRICING_PER_HOUR,
     RawRequestResult,
     WorkloadConfig,
 )
@@ -40,7 +40,6 @@ class EngineNotReadyError(Exception):
 
 
 class BaseEngine(ABC):
-
     @abstractmethod
     def name(self) -> str: ...
 

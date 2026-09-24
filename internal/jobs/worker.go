@@ -130,7 +130,7 @@ func (w *BenchmarkWorker) pollForResults(ctx context.Context, jobID, runID, work
 		case <-timeout.C:
 			return fmt.Errorf("poll timeout (45m) for job=%s run=%s", jobID, runID)
 		case <-ticker.C:
-			status, msg, err := w.fetchRunStatus(runID, workerURL)
+			status, msg, err := w.fetchRunStatus(ctx, runID, workerURL)
 			if err != nil {
 				continue // transient network error — retry on next tick
 			}
@@ -144,8 +144,10 @@ func (w *BenchmarkWorker) pollForResults(ctx context.Context, jobID, runID, work
 	}
 }
 
-func (w *BenchmarkWorker) fetchRunStatus(runID, workerURL string) (status, message string, err error) {
-	reqCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (w *BenchmarkWorker) fetchRunStatus(ctx context.Context, runID, workerURL string) (status, message string, err error) {
+	// Derived from the poll loop's context so a cancelled job cancels the
+	// in-flight status request too, and the trace context survives the hop.
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet,
 		workerURL+"/run/"+runID+"/status", nil)

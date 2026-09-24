@@ -1,7 +1,6 @@
 import logging
 
 import optuna
-
 from pydantic import BaseModel
 
 from worker.engines.base import BaseEngine
@@ -28,7 +27,6 @@ class SearchResult(BaseModel):
 
 
 class ConfigSearcher:
-
     def __init__(
         self,
         engine: BaseEngine,
@@ -82,8 +80,10 @@ class ConfigSearcher:
                 logger.error("trial failed: %s", e)
                 try:
                     self.engine.teardown()
-                except Exception:
-                    pass
+                except Exception as teardown_error:
+                    # The trial already failed; a teardown failure must not mask
+                    # it, but a leaked engine process is worth knowing about.
+                    logger.warning("teardown after failed trial also failed: %s", teardown_error)
                 study.tell(trial, 0.0)
 
         pareto = _pareto_frontier(trial_results)
@@ -117,9 +117,11 @@ def _pareto_frontier(results: list[tuple[EngineConfig, float, float]]) -> list[d
                     dominated = True
                     break
         if not dominated:
-            pareto.append({
-                "config": config.model_dump(),
-                "tok_per_s": tok_per_s,
-                "cost_per_mtok": cost,
-            })
+            pareto.append(
+                {
+                    "config": config.model_dump(),
+                    "tok_per_s": tok_per_s,
+                    "cost_per_mtok": cost,
+                }
+            )
     return pareto

@@ -122,7 +122,11 @@ func (q *QueueClient) Start(ctx context.Context, workers *river.Workers) error {
 		return fmt.Errorf("river start: %w", err)
 	}
 	<-ctx.Done()
-	stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Deliberately not derived from ctx: it is already cancelled by the time we
+	// get here, so a derived context would make graceful shutdown return at once
+	// and kill in-flight jobs.
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	return rc.Stop(stopCtx)
+	return rc.Stop(stopCtx) //nolint:contextcheck // see above
+
 }

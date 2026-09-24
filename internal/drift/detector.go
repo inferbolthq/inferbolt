@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/inferbolthq/inferbolt/internal/metrics"
 )
 
@@ -57,7 +58,7 @@ func (d *Detector) Start(ctx context.Context) {
 		ticker := time.NewTicker(d.config.CheckInterval)
 		defer ticker.Stop()
 
-		slog.Info("starting drift detector", 
+		slog.Info("starting drift detector",
 			"check_interval", d.config.CheckInterval,
 			"lookback_window", d.config.LookbackWindow,
 			"min_samples", d.config.MinSamples)
@@ -237,11 +238,12 @@ func (d *Detector) checkMetric(engine, model, metricName string, baselineVal, cu
 
 	// Determine severity
 	var severity string
-	if deviationPct >= d.config.CriticalThresholdPct {
+	switch {
+	case deviationPct >= d.config.CriticalThresholdPct:
 		severity = "critical"
-	} else if deviationPct >= d.config.WarningThresholdPct {
+	case deviationPct >= d.config.WarningThresholdPct:
 		severity = "warning"
-	} else {
+	default:
 		return nil // Below warning threshold
 	}
 

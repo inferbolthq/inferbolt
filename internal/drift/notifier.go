@@ -26,7 +26,7 @@ func NewNotifier(webhookURL string) *Notifier {
 
 func (n *Notifier) Start(ctx context.Context, alerts <-chan DriftAlert) {
 	go func() {
-		slog.Info("starting drift notifier", 
+		slog.Info("starting drift notifier",
 			"webhook_enabled", n.webhookURL != "")
 
 		for {
@@ -39,8 +39,8 @@ func (n *Notifier) Start(ctx context.Context, alerts <-chan DriftAlert) {
 					slog.Info("alerts channel closed, stopping notifier")
 					return
 				}
-				if err := n.send(alert); err != nil {
-					slog.Error("failed to send notification", 
+				if err := n.send(ctx, alert); err != nil {
+					slog.Error("failed to send notification",
 						"error", err,
 						"engine", alert.Engine,
 						"model", alert.Model,
@@ -57,8 +57,8 @@ type SlackMessage struct {
 }
 
 type SlackBlock struct {
-	Type string      `json:"type"`
-	Text SlackText   `json:"text"`
+	Type string    `json:"type"`
+	Text SlackText `json:"text"`
 }
 
 type SlackText struct {
@@ -66,9 +66,9 @@ type SlackText struct {
 	Text string `json:"text"`
 }
 
-func (n *Notifier) send(alert DriftAlert) error {
+func (n *Notifier) send(ctx context.Context, alert DriftAlert) error {
 	// Always log the alert
-	slog.Info("drift alert", 
+	slog.Info("drift alert",
 		"engine", alert.Engine,
 		"model", alert.Model,
 		"metric", alert.Metric,
@@ -117,7 +117,7 @@ func (n *Notifier) send(alert DriftAlert) error {
 		return fmt.Errorf("marshal slack message: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", n.webhookURL, bytes.NewBuffer(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.webhookURL, bytes.NewBuffer(payload))
 	if err != nil {
 		return fmt.Errorf("create slack request: %w", err)
 	}

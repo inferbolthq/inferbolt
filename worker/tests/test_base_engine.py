@@ -6,7 +6,6 @@ from worker.models import BenchmarkResult, EngineConfig, RawRequestResult
 
 
 class MockEngine(BaseEngine):
-
     def name(self) -> str:
         return "mock"
 

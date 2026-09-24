@@ -84,7 +84,7 @@ func TestCheckMetric(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			alert := detector.checkMetric("vllm", "test-model", tt.metricName, tt.baseline, tt.current)
-			
+
 			if tt.expectedAlert {
 				if alert == nil {
 					t.Errorf("expected alert, got nil")
@@ -96,10 +96,8 @@ func TestCheckMetric(t *testing.T) {
 				if alert.Metric != tt.metricName {
 					t.Errorf("expected metric %s, got %s", tt.metricName, alert.Metric)
 				}
-			} else {
-				if alert != nil {
-					t.Errorf("expected no alert, got %+v", alert)
-				}
+			} else if alert != nil {
+				t.Errorf("expected no alert, got %+v", alert)
 			}
 		})
 	}

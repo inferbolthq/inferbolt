@@ -6,6 +6,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
+// OptimizedInferenceSpec is the desired state of an OptimizedInference: which
+// model to serve, on which engine and GPU profile, and the engine tuning to
+// apply. With AutoOptimize set, the controller benchmarks before deploying.
 type OptimizedInferenceSpec struct {
 	Model          string       `json:"model" yaml:"model"`
 	Engine         string       `json:"engine" yaml:"engine"`
@@ -19,12 +22,15 @@ type OptimizedInferenceSpec struct {
 	AutoOptimize   bool         `json:"autoOptimize,omitempty" yaml:"autoOptimize,omitempty"`
 }
 
+// ResourceSpec is the hardware each replica is scheduled against.
 type ResourceSpec struct {
 	GPUCount int32 `json:"gpuCount" yaml:"gpuCount"`
 	MemoryGB int32 `json:"memoryGB" yaml:"memoryGB"`
 	CPUCores int32 `json:"cpuCores" yaml:"cpuCores"`
 }
 
+// OptimizedInferenceStatus is the observed state of an OptimizedInference.
+// Phase moves through Pending, Benchmarking, Deploying, Ready and Failed.
 type OptimizedInferenceStatus struct {
 	Phase              string       `json:"phase"`
 	Message            string       `json:"message,omitempty"`
@@ -34,6 +40,8 @@ type OptimizedInferenceStatus struct {
 	ObservedGeneration int64        `json:"observedGeneration,omitempty"`
 }
 
+// OptimizedInference is a model deployment whose engine configuration is
+// chosen from benchmark measurements rather than set by hand.
 type OptimizedInference struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -41,6 +49,7 @@ type OptimizedInference struct {
 	Status            OptimizedInferenceStatus `json:"status,omitempty"`
 }
 
+// OptimizedInferenceList is a list of OptimizedInference resources.
 type OptimizedInferenceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

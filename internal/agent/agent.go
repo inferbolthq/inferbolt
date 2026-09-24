@@ -202,7 +202,7 @@ func (a *Agent) Run(ctx context.Context) (*Report, error) {
 		a.spend.turns++
 
 		resp, err := a.client.New(ctx, anthropic.MessageNewParams{
-			Model:     anthropic.Model(a.model),
+			Model:     a.model,
 			MaxTokens: maxResponseTokens,
 			System:    system,
 			Messages:  messages,

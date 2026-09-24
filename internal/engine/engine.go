@@ -27,17 +27,17 @@ type Workload struct {
 }
 
 type Result struct {
-	TTFT       time.Duration
-	ITL        time.Duration // inter-token latency
-	Throughput float64       // tokens/sec
+	TTFT        time.Duration
+	ITL         time.Duration // inter-token latency
+	Throughput  float64       // tokens/sec
 	GPUMemoryMB int
-	KVCacheHit float64 // 0-1
-	ErrorRate  float64
+	KVCacheHit  float64 // 0-1
+	ErrorRate   float64
 	CostPerMTok float64
 }
 
 type EngineMetrics struct {
-	GPUUtilPct  float64
-	MemUsedMB   int64
+	GPUUtilPct   float64
+	MemUsedMB    int64
 	RequestQueue int
 }

@@ -301,7 +301,7 @@ func (a *Agent) callRunBenchmark(ctx context.Context, raw json.RawMessage) (stri
 		Engine:       in.Engine,
 		GPUProfile:   a.campaign.GPUProfile,
 		Workload:     a.campaign.Workload,
-		EngineConfig: in.engineConfigInput.toJobs(),
+		EngineConfig: in.toJobs(),
 	}
 
 	// Re-running an identical configuration buys nothing but costs a trial.
@@ -354,7 +354,7 @@ func (a *Agent) callRecommend(raw json.RawMessage) (string, bool) {
 
 	rec := &Recommendation{
 		Engine:       in.Engine,
-		EngineConfig: in.engineConfigInput.toJobs(),
+		EngineConfig: in.toJobs(),
 		Reasoning:    in.Reasoning,
 		RunnerUp:     in.RunnerUp,
 		Confidence:   in.Confidence,
@@ -365,7 +365,7 @@ func (a *Agent) callRecommend(raw json.RawMessage) (string, bool) {
 	// headline numbers are read off a trial rather than off the model's prose.
 	if t, ok := a.findTrial(TrialSpec{
 		Model: a.campaign.Model, Engine: in.Engine, GPUProfile: a.campaign.GPUProfile,
-		Workload: a.campaign.Workload, EngineConfig: in.engineConfigInput.toJobs(),
+		Workload: a.campaign.Workload, EngineConfig: in.toJobs(),
 	}); ok && t.OK() {
 		r := t.Result
 		rec.Measured = &r

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 class WorkloadConfig(BaseModel):
     """Configuration for benchmark workload parameters."""
+
     concurrency: int = 32
     prompt_tokens: int = 512
     output_tokens: int = 256
@@ -15,6 +16,7 @@ class WorkloadConfig(BaseModel):
 
 class EngineConfig(BaseModel):
     """Configuration for inference engine parameters."""
+
     quantization: str | None = None  # "fp8", "int4", "gptq", "awq"
     tensor_parallel: int = 1
     max_batch_size: int = 256
@@ -24,6 +26,7 @@ class EngineConfig(BaseModel):
 
 class BenchmarkJob(BaseModel):
     """A benchmark job request from the orchestrator."""
+
     job_id: str
     model: str
     engines: list[str]
@@ -35,15 +38,17 @@ class BenchmarkJob(BaseModel):
 
 class RawRequestResult(BaseModel):
     """Raw timing and token data from a single inference request."""
-    ttft_ms: float        # time to first token in milliseconds
-    itl_ms: float         # inter-token latency in milliseconds
-    total_ms: float       # total request duration
-    output_tokens: int    # actual tokens generated
+
+    ttft_ms: float  # time to first token in milliseconds
+    itl_ms: float  # inter-token latency in milliseconds
+    total_ms: float  # total request duration
+    output_tokens: int  # actual tokens generated
     error: str | None = None
 
 
 class BenchmarkResult(BaseModel):
     """Aggregated benchmark results for one engine/model combination."""
+
     job_id: str
     run_id: str
     engine: str
@@ -61,8 +66,9 @@ class BenchmarkResult(BaseModel):
 
 class RunStatus(BaseModel):
     """Status of a benchmark run."""
+
     run_id: str
-    status: str   # "running", "completed", "failed"
+    status: str  # "running", "completed", "failed"
     result: BenchmarkResult | None = None
     error: str | None = None
 

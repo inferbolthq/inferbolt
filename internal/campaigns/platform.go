@@ -213,7 +213,8 @@ func (p *Platform) waitForJob(ctx context.Context, jobID string) (*jobs.Job, err
 func (p *Platform) checkCancelled(ctx context.Context) error {
 	st, err := p.state.State(ctx, p.campaignID)
 	if err != nil {
-		return nil // a read failure should not abort a campaign mid-flight
+		//nolint:nilerr // a read failure should not abort a campaign mid-flight
+		return nil
 	}
 	if st == StateCancelled {
 		return ErrCampaignCancelled

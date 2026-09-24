@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/inferbolthq/inferbolt/internal/router"
 	"github.com/inferbolthq/inferbolt/internal/workers"
 )
@@ -141,7 +143,7 @@ func routeHandler(selector *router.EngineSelector, orchestratorURL string) http.
 		result, err := selector.Select(r.Context(), selectionReq, workers)
 		if err != nil {
 			slog.Error("worker selection failed", "error", err)
-			if err == router.ErrNoWorkerAvailable {
+			if errors.Is(err, router.ErrNoWorkerAvailable) {
 				http.Error(w, "no worker available", http.StatusServiceUnavailable)
 			} else {
 				http.Error(w, "worker selection failed", http.StatusInternalServerError)
@@ -156,7 +158,7 @@ func routeHandler(selector *router.EngineSelector, orchestratorURL string) http.
 
 func fetchWorkerStatus(ctx context.Context, orchestratorURL string) ([]router.ExtendedWorkerEntry, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", orchestratorURL+"/internal/workers", nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)

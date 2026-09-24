@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from worker.models import BenchmarkResult, GPU_PRICING_PER_HOUR
+from worker.models import GPU_PRICING_PER_HOUR, BenchmarkResult
 
 OPENAI_PRICING_PER_MTOK: dict[str, float] = {
     "gpt-4o": 5.00,

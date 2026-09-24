@@ -1,9 +1,23 @@
-from .base import BaseEngine, EngineStartError, EngineNotReadyError
-from .vllm_engine import VLLMEngine
-from .sglang_engine import SGLangEngine
+from .base import BaseEngine, EngineNotReadyError, EngineStartError
 from .llamacpp_engine import LlamaCppEngine
-from .ollama_engine import OllamaEngine
 from .mock_engine import MockEngine
+from .ollama_engine import OllamaEngine
+from .sglang_engine import SGLangEngine
+from .vllm_engine import VLLMEngine
+
+# Re-exported so callers import the engine contract and its errors from one place.
+__all__ = [
+    "ENGINES",
+    "BaseEngine",
+    "EngineNotReadyError",
+    "EngineStartError",
+    "LlamaCppEngine",
+    "MockEngine",
+    "OllamaEngine",
+    "SGLangEngine",
+    "VLLMEngine",
+    "get_engine",
+]
 
 ENGINES: dict[str, type[BaseEngine]] = {
     "vllm": VLLMEngine,

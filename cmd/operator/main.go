@@ -53,7 +53,9 @@ func (r *OptimizedInferenceReconciler) Reconcile(ctx context.Context, req reconc
 		if err != nil {
 			oi.Status.Phase = "Failed"
 			oi.Status.Message = fmt.Sprintf("Failed to submit benchmark job: %v", err)
-			r.Status().Update(ctx, &oi)
+			if err := r.Status().Update(ctx, &oi); err != nil {
+				slog.Error("failed to update status", "resource", oi.Name, "phase", oi.Status.Phase, "error", err)
+			}
 			return reconcile.Result{}, err
 		}
 
@@ -100,7 +102,9 @@ func (r *OptimizedInferenceReconciler) Reconcile(ctx context.Context, req reconc
 		case "failed":
 			oi.Status.Phase = "Failed"
 			oi.Status.Message = "Benchmark job failed"
-			r.Status().Update(ctx, &oi)
+			if err := r.Status().Update(ctx, &oi); err != nil {
+				slog.Error("failed to update status", "resource", oi.Name, "phase", oi.Status.Phase, "error", err)
+			}
 			return reconcile.Result{}, nil
 
 		default: // still running
@@ -113,7 +117,9 @@ func (r *OptimizedInferenceReconciler) Reconcile(ctx context.Context, req reconc
 		if err := r.reconcileDeployment(ctx, &oi); err != nil {
 			oi.Status.Phase = "Failed"
 			oi.Status.Message = fmt.Sprintf("Failed to deploy: %v", err)
-			r.Status().Update(ctx, &oi)
+			if err := r.Status().Update(ctx, &oi); err != nil {
+				slog.Error("failed to update status", "resource", oi.Name, "phase", oi.Status.Phase, "error", err)
+			}
 			return reconcile.Result{}, err
 		}
 

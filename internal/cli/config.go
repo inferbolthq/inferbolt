@@ -76,8 +76,13 @@ func Save(cfg *Config) error {
 	defer f.Close()
 
 	enc := yaml.NewEncoder(f)
-	defer enc.Close()
-	return enc.Encode(cfg)
+	if err := enc.Encode(cfg); err != nil {
+		enc.Close() //nolint:errcheck // the encode error is the one worth reporting
+		return err
+	}
+	// Close flushes. Swallowing its error would leave a truncated config on
+	// disk while reporting success.
+	return enc.Close()
 }
 
 // NewClient creates an HTTP client from this config.

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -276,13 +277,23 @@ func (h *Handler) CancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Notify orchestrator (best-effort)
-	go func() {
-		req, _ := http.NewRequest(http.MethodPost,
+	// Notify orchestrator (best-effort). The goroutine outlives the request, so
+	// it detaches from the request's cancellation while keeping its values —
+	// trace context survives, but the handler returning does not kill the call.
+	go func() { //nolint:contextcheck // detaching from the request is the point; see above
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 			h.orchestratorURL+"/internal/jobs/"+jobID+"/cancel", nil)
-		if req != nil {
-			h.httpClient.Do(req) //nolint:errcheck
+		if err != nil {
+			return
 		}
+		resp, err := h.httpClient.Do(req)
+		if err != nil {
+			return
+		}
+		resp.Body.Close() //nolint:errcheck // nothing to read; closing frees the connection
 	}()
 
 	writeJSON(w, http.StatusOK, map[string]bool{"cancelled": true})

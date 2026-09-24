@@ -22,7 +22,6 @@ def _model_slug(model: str) -> str:
 
 
 class SGLangEngine(BaseEngine):
-
     def __init__(self) -> None:
         self._proc: subprocess.Popen | None = None
         self._model: str = ""
@@ -34,9 +33,13 @@ class SGLangEngine(BaseEngine):
         self._model = model
         log_path = Path(f"/tmp/inferbolt-sglang-{_model_slug(model)}.log")
         cmd = [
-            "python", "-m", "sglang.launch_server",
-            "--model-path", model,
-            "--port", str(_PORT),
+            "python",
+            "-m",
+            "sglang.launch_server",
+            "--model-path",
+            model,
+            "--port",
+            str(_PORT),
         ]
         if config.quantization:
             cmd += ["--quantization", config.quantization]
@@ -79,8 +82,10 @@ class SGLangEngine(BaseEngine):
                 r = client.get(f"{_BASE_URL}/get_server_info")
                 data = r.json()
                 return int(data.get("memory_used_mb", 0))
-        except Exception:
-            pass
+        except Exception as e:
+            # Not fatal, but a silent 0 is indistinguishable from a real
+            # reading — say why the figure is missing.
+            logger.debug("SGLang GPU memory scrape failed: %s", e)
         return 0
 
     def get_kv_cache_hit_rate(self) -> float:
@@ -89,8 +94,8 @@ class SGLangEngine(BaseEngine):
                 r = client.get(f"{_BASE_URL}/get_server_info")
                 data = r.json()
                 return float(data.get("cache_hit_rate", 0.0))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("SGLang KV cache hit rate scrape failed: %s", e)
         return 0.0
 
     async def _send_request(self, prompt: str, max_tokens: int) -> RawRequestResult:
@@ -139,4 +144,6 @@ class SGLangEngine(BaseEngine):
                 output_tokens=output_tokens,
             )
         except Exception as e:
-            return RawRequestResult(ttft_ms=0.0, itl_ms=0.0, total_ms=0.0, output_tokens=0, error=str(e))
+            return RawRequestResult(
+                ttft_ms=0.0, itl_ms=0.0, total_ms=0.0, output_tokens=0, error=str(e)
+            )

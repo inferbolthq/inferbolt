@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/ristretto"
+
 	"github.com/inferbolthq/inferbolt/internal/workers"
 )
 
@@ -24,10 +25,10 @@ func NewEngineSelector(cache *ristretto.Cache) *EngineSelector {
 }
 
 type SelectionRequest struct {
-	Classification   ClassificationResult `json:"classification"`
-	GPUProfile       string               `json:"gpu_profile"`
-	TenantID         string               `json:"tenant_id"`
-	FallbackAllowed  bool                 `json:"fallback_allowed"`
+	Classification  ClassificationResult `json:"classification"`
+	GPUProfile      string               `json:"gpu_profile"`
+	TenantID        string               `json:"tenant_id"`
+	FallbackAllowed bool                 `json:"fallback_allowed"`
 }
 
 type SelectionResult struct {
@@ -40,11 +41,11 @@ type SelectionResult struct {
 
 func (s *EngineSelector) Select(ctx context.Context, req SelectionRequest, availableWorkers []ExtendedWorkerEntry) (SelectionResult, error) {
 	cacheKey := fmt.Sprintf("sel:%s:%s", req.TenantID, req.GPUProfile)
-	
+
 	// Check cache first
 	if cached, found := s.cache.Get(cacheKey); found {
 		if result, ok := cached.(SelectionResult); ok {
-			slog.Info("using cached selection", 
+			slog.Info("using cached selection",
 				"tenant_id", req.TenantID,
 				"gpu_profile", req.GPUProfile,
 				"engine", result.Engine,
@@ -55,10 +56,10 @@ func (s *EngineSelector) Select(ctx context.Context, req SelectionRequest, avail
 
 	// First attempt: find worker matching recommended engine and GPU profile
 	for _, worker := range availableWorkers {
-		if worker.Status == workers.StatusIdle && 
-		   worker.Engine == req.Classification.RecommendedEngine && 
-		   worker.GPUType == req.GPUProfile {
-			
+		if worker.Status == workers.StatusIdle &&
+			worker.Engine == req.Classification.RecommendedEngine &&
+			worker.GPUType == req.GPUProfile {
+
 			result := SelectionResult{
 				Engine:       worker.Engine,
 				WorkerID:     worker.ID,
@@ -120,4 +121,3 @@ type ExtendedWorkerEntry struct {
 	workers.WorkerEntry
 	Engine string `json:"engine"`
 }
-

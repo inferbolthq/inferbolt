@@ -58,9 +58,7 @@ class MockEngine(BaseEngine):
     def start(self, model: str, config: EngineConfig) -> None:
         self._config = config
 
-        seed = hashlib.sha256(
-            f"{model}|{config.model_dump_json()}".encode()
-        ).digest()
+        seed = hashlib.sha256(f"{model}|{config.model_dump_json()}".encode()).digest()
         self._rng = random.Random(int.from_bytes(seed[:8], "big"))
 
         speedup = _QUANT_SPEEDUP.get(config.quantization or "", 1.0)

@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/inferbolthq/inferbolt/internal/drift"
 	"github.com/inferbolthq/inferbolt/internal/metrics"
 )
@@ -35,7 +36,7 @@ func main() {
 	}
 
 	slackWebhookURL := os.Getenv("SLACK_WEBHOOK_URL")
-	
+
 	checkInterval := parseDuration("DRIFT_CHECK_INTERVAL", 5*time.Minute)
 	lookbackWindow := parseDuration("DRIFT_LOOKBACK", 1*time.Hour)
 	warningPct := parseFloat("DRIFT_WARNING_PCT", 15.0)
@@ -53,7 +54,7 @@ func main() {
 	// Create services
 	metricsWriter := metrics.NewMetricsWriter(pool)
 	baselineStore := drift.NewBaselineStore(pool)
-	
+
 	detectorConfig := drift.DetectorConfig{
 		WarningThresholdPct:  warningPct,
 		CriticalThresholdPct: criticalPct,
@@ -90,7 +91,7 @@ func main() {
 		Handler: r,
 	}
 
-	slog.Info("starting collector server", 
+	slog.Info("starting collector server",
 		"port", port,
 		"check_interval", checkInterval,
 		"lookback_window", lookbackWindow,
@@ -222,8 +223,8 @@ func resetBaselineHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		// Delete baseline from database
-		_, err := pool.Exec(r.Context(), 
-			"DELETE FROM public.baselines WHERE engine = $1 AND model = $2", 
+		_, err := pool.Exec(r.Context(),
+			"DELETE FROM public.baselines WHERE engine = $1 AND model = $2",
 			req.Engine, req.Model)
 		if err != nil {
 			slog.Error("failed to delete baseline", "error", err)

@@ -2,12 +2,14 @@ package drift
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/inferbolthq/inferbolt/internal/jobs"
 )
 
@@ -77,7 +79,7 @@ func (b *BaselineStore) Get(ctx context.Context, engine, model string) (*Baselin
 		&baseline.SampleCount,
 		&baseline.SetAt,
 	)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -126,7 +128,7 @@ func computeMedian(values []float64) float64 {
 	sorted := make([]float64, len(values))
 	copy(sorted, values)
 	sort.Float64s(sorted)
-	
+
 	n := len(sorted)
 	if n%2 == 0 {
 		return (sorted[n/2-1] + sorted[n/2]) / 2
@@ -138,19 +140,19 @@ func computePercentile(values []float64, percentile float64) float64 {
 	sorted := make([]float64, len(values))
 	copy(sorted, values)
 	sort.Float64s(sorted)
-	
+
 	n := len(sorted)
 	index := percentile * float64(n-1)
 	lower := int(index)
 	upper := lower + 1
-	
+
 	if upper >= n {
 		return sorted[n-1]
 	}
 	if lower < 0 {
 		return sorted[0]
 	}
-	
+
 	weight := index - float64(lower)
 	return sorted[lower]*(1-weight) + sorted[upper]*weight
 }
@@ -159,7 +161,7 @@ func computeMean(values []float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}
-	
+
 	sum := 0.0
 	for _, v := range values {
 		sum += v
@@ -171,7 +173,7 @@ func computeMaxInt64(values []int64) int64 {
 	if len(values) == 0 {
 		return 0
 	}
-	
+
 	max := values[0]
 	for _, v := range values[1:] {
 		if v > max {

@@ -22,7 +22,6 @@ def _model_slug(model: str) -> str:
 
 
 class VLLMEngine(BaseEngine):
-
     def __init__(self) -> None:
         self._proc: subprocess.Popen | None = None
         self._model: str = ""
@@ -34,9 +33,13 @@ class VLLMEngine(BaseEngine):
         self._model = model
         log_path = Path(f"/tmp/inferbolt-vllm-{_model_slug(model)}.log")
         cmd = [
-            "python", "-m", "vllm.entrypoints.openai.api_server",
-            "--model", model,
-            "--port", str(_PORT),
+            "python",
+            "-m",
+            "vllm.entrypoints.openai.api_server",
+            "--model",
+            model,
+            "--port",
+            str(_PORT),
         ]
         if config.quantization:
             cmd += ["--quantization", config.quantization]
@@ -85,8 +88,10 @@ class VLLMEngine(BaseEngine):
                         if len(parts) >= 2:
                             pct = float(parts[-1])
                             return int(pct * 80 * 1024)
-        except Exception:
-            pass
+        except Exception as e:
+            # Not fatal, but a silent 0 is indistinguishable from a real
+            # reading — say why the figure is missing.
+            logger.debug("vLLM GPU memory scrape failed: %s", e)
         return 0
 
     def get_kv_cache_hit_rate(self) -> float:
@@ -98,8 +103,8 @@ class VLLMEngine(BaseEngine):
                         parts = line.split()
                         if len(parts) >= 2:
                             return float(parts[-1])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("vLLM KV cache hit rate scrape failed: %s", e)
         return 0.0
 
     async def _send_request(self, prompt: str, max_tokens: int) -> RawRequestResult:
@@ -148,4 +153,6 @@ class VLLMEngine(BaseEngine):
                 output_tokens=output_tokens,
             )
         except Exception as e:
-            return RawRequestResult(ttft_ms=0.0, itl_ms=0.0, total_ms=0.0, output_tokens=0, error=str(e))
+            return RawRequestResult(
+                ttft_ms=0.0, itl_ms=0.0, total_ms=0.0, output_tokens=0, error=str(e)
+            )

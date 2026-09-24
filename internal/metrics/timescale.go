@@ -76,7 +76,9 @@ func (m *MetricsWriter) WriteBenchResultBatch(ctx context.Context, results []job
 		})
 	}
 	br := m.pool.SendBatch(ctx, batch)
-	defer br.Close()
+	// Every queued statement is read by the Exec loop below, so Close has no
+	// unreported error left to return.
+	defer br.Close() //nolint:errcheck
 	for range results {
 		if _, err := br.Exec(); err != nil {
 			return fmt.Errorf("batch exec bench result: %w", err)

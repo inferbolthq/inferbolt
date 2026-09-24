@@ -44,7 +44,9 @@ class _JSONFormatter(logging.Formatter):
 
 _handler = logging.StreamHandler()
 _handler.setFormatter(_JSONFormatter())
-logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO), handlers=[_handler], force=True)
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO), handlers=[_handler], force=True
+)
 logger = logging.getLogger(__name__)
 
 # ── OTel (optional) ───────────────────────────────────────────────────────────
@@ -52,9 +54,9 @@ logger = logging.getLogger(__name__)
 if OTEL_ENDPOINT:
     try:
         from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
         _provider = TracerProvider()
         _provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=OTEL_ENDPOINT)))
@@ -65,6 +67,10 @@ if OTEL_ENDPOINT:
 # ── State ─────────────────────────────────────────────────────────────────────
 
 _runs: dict[str, RunStatus] = {}
+
+# The event loop holds only a weak reference to a task, so a benchmark left
+# unreferenced can be garbage-collected mid-run. Hold it until it finishes.
+_background_tasks: set[asyncio.Task] = set()
 
 # ── Startup / shutdown ────────────────────────────────────────────────────────
 
@@ -118,6 +124,7 @@ app = FastAPI(title="inferbolt-worker", lifespan=lifespan)
 if OTEL_ENDPOINT:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
         FastAPIInstrumentor.instrument_app(app)
     except ImportError:
         pass
@@ -129,7 +136,9 @@ if OTEL_ENDPOINT:
 async def post_run(job: BenchmarkJob) -> dict:
     run_id = str(uuid.uuid4())
     _runs[run_id] = RunStatus(run_id=run_id, status="running")
-    asyncio.create_task(_execute_benchmark(job, run_id))
+    task = asyncio.create_task(_execute_benchmark(job, run_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return {"run_id": run_id}
 
 

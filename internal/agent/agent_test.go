@@ -427,7 +427,7 @@ func TestRun_RequestIsShapedForCaching(t *testing.T) {
 	assert.Equal(t, first.System[0].Text, second.System[0].Text)
 	assert.Len(t, second.Tools, len(first.Tools))
 
-	assert.Equal(t, DefaultModel, string(first.Model))
+	assert.Equal(t, DefaultModel, first.Model)
 	assert.NotNil(t, first.Thinking.OfAdaptive, "adaptive thinking should be enabled")
 
 	// Campaign facts belong in the prompt; the planner must not have to guess.

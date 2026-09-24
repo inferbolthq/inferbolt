@@ -134,12 +134,12 @@ func TestClassifyBatch(t *testing.T) {
 
 func TestClassifyChat(t *testing.T) {
 	input := ClassificationInput{
-		PromptTokens:      100,  // <= 1024
-		OutputTokens:      100,  // <= 512
-		Concurrency:       10,   // <= 50
+		PromptTokens:      100, // <= 1024
+		OutputTokens:      100, // <= 512
+		Concurrency:       10,  // <= 50
 		StructuredOutput:  false,
 		ToolCalls:         false,
-		SharedPrefixRatio: 0.1,  // <= 0.4
+		SharedPrefixRatio: 0.1, // <= 0.4
 	}
 
 	result := Classify(input)

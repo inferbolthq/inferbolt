@@ -1,6 +1,7 @@
 package drift
 
 import (
+	"context"
 	"math"
 	"testing"
 
@@ -39,7 +40,7 @@ func TestComputeFromResults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			baseline, valid := store.ComputeFromResults(nil, "vllm", "test-model", tt.results)
+			baseline, valid := store.ComputeFromResults(context.Background(), "vllm", "test-model", tt.results)
 			if valid != tt.expectValid {
 				t.Errorf("expected valid=%v, got %v", tt.expectValid, valid)
 			}
