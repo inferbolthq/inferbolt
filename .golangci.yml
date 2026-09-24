@@ -1,0 +1,105 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose      # unclosed HTTP response bodies leak connections
+    - contextcheck   # a dropped context breaks cancellation and tracing
+    - errorlint      # %v on an error breaks the wrap chain errors.Is/As depends on
+    - goconst
+    - gocritic
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - rowserrcheck   # a pgx rows.Err() left unchecked silently truncates results
+    - sqlclosecheck
+    - unconvert
+    - unparam
+    - wastedassign
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      # Closing a reader we are done with, or flushing a response encoder, has
+      # no recovery path — the request is already served. Everything else must
+      # still be checked.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (net.Listener).Close
+        - (*encoding/json.Encoder).Encode
+    revive:
+      rules:
+        - name: exported
+          arguments: ["checkPrivateReceivers"]
+    goconst:
+      # JSON field names in response literals ("error", "description") repeat by
+      # nature; hoisting them into constants hurts readability rather than
+      # helping. The real fix for the repetition is a shared response envelope,
+      # tracked in memory/technical-debt.md.
+      min-occurrences: 12
+      ignore-string-values: "error|description|string|integer|engine|enum|minimum|maximum|type"
+
+  exclusions:
+    rules:
+      # Every c.do() call site hands the response to decodeResp, which defers
+      # Close, or closes it explicitly. bodyclose cannot trace through the
+      # generic helper and flags all of them.
+      - path: internal/cli/client\.go
+        linters:
+          - bodyclose
+      # Test files exercise failure paths deliberately and assert on results
+      # rather than on every returned error. httptest.NewRequest without a
+      # context is the standard way to build a test request.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - goconst
+          - noctx
+          - unparam
+
+      # `exported` requires a doc comment on every exported identifier. Go's
+      # internal/ packages are not importable outside this module and never
+      # appear on pkg.go.dev, so the rule's purpose — a documented public API —
+      # does not apply there. It stays enforced on everything that is public.
+      # The remaining doc-comment gap is tracked in memory/technical-debt.md.
+      - path: ^internal/
+        text: "^exported:"
+        linters:
+          - revive
+
+      # DeepCopy/DeepCopyInto/DeepCopyObject are the Kubernetes deepcopy
+      # contract, normally emitted by controller-gen. Documenting each one adds
+      # nothing a reader of the k8s API conventions does not already know.
+      - path: ^k8s/crds/
+        text: "exported method .*DeepCopy"
+        linters:
+          - revive
+
+      # os.Exit in main() skips deferred cleanup. On these fatal startup paths
+      # the process is terminating anyway, so the skipped Close is harmless.
+      # Paying this down means extracting a `run() error`; tracked in
+      # memory/technical-debt.md.
+      - path: ^cmd/.*/main\.go$
+        text: "exitAfterDefer"
+        linters:
+          - gocritic
+      # Generated protobuf code is not ours to lint.
+      - path: ^gen/
+        linters:
+          - revive
+          - gocritic
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/inferbolthq/inferbolt

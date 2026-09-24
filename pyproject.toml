@@ -31,3 +31,34 @@ build-backend = "setuptools.build_meta"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["worker/tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # import sorting
+    "B",    # bugbear
+    "UP",   # pyupgrade
+    "ASYNC",
+    "S",    # bandit security checks
+    "RUF",
+]
+ignore = [
+    "E501",  # line length is handled by the formatter
+    "B008",  # FastAPI's Depends() in defaults is the framework's own idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on internals and use asserts by design.
+"worker/tests/*" = ["S101"]
+# Spawning an inference server is what an engine adapter is for, and the engine
+# name is validated against a closed allowlist before it reaches a command.
+# S108: engine logs use a predictable /tmp path — tracked in known-issues.md.
+"worker/engines/*" = ["S603", "S607", "S108"]
+# The mock engine fabricates latencies for testing; randomness here is not
+# security-relevant.
+"worker/engines/mock_engine.py" = ["S311"]

@@ -1,0 +1,23 @@
+# Normalize line endings so a Windows checkout does not produce CRLF diffs.
+* text=auto eol=lf
+
+*.go      text eol=lf
+*.py      text eol=lf
+*.sh      text eol=lf
+*.sql     text eol=lf
+*.yaml    text eol=lf
+*.yml     text eol=lf
+Makefile  text eol=lf
+
+*.ps1     text eol=crlf
+*.bat     text eol=crlf
+
+*.png     binary
+*.jpg     binary
+*.gif     binary
+*.ico     binary
+*.pdf     binary
+
+# Keep generated and vendored code out of language stats and diff review.
+gen/**             linguist-generated=true
+ui/package-lock.json linguist-generated=true
