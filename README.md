@@ -1,17 +1,68 @@
+<div align="center">
+
+<img src="docs/assets/logo.svg" width="104" alt="InferBolt">
+
 # InferBolt
+
+**Stop guessing which inference engine and config to run.**<br>
+Benchmark vLLM, SGLang, llama.cpp and Ollama head-to-head — then let an agent find the configuration that fits your workload.
 
 [![CI](https://github.com/inferbolthq/inferbolt/actions/workflows/ci.yaml/badge.svg)](https://github.com/inferbolthq/inferbolt/actions/workflows/ci.yaml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/inferbolthq/inferbolt.svg)](https://pkg.go.dev/github.com/inferbolthq/inferbolt)
-[![Go Report Card](https://goreportcard.com/badge/github.com/inferbolthq/inferbolt)](https://goreportcard.com/report/github.com/inferbolthq/inferbolt)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Go 1.24+](https://img.shields.io/badge/go-1.24%2B-00ADD8.svg?logo=go&logoColor=white)](go.mod)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
 
-Open-source LLM inference benchmarking and optimization. Run head-to-head benchmarks across vLLM, SGLang, llama.cpp and Ollama — measure TTFT, inter-token latency, throughput, KV cache hit rate and cost per million tokens — then let an agent find the configuration that best fits your workload.
+<a href="#install"><b>Install</b></a> ·
+<a href="#quick-start"><b>Quick start</b></a> ·
+<a href="#the-agent"><b>The agent</b></a> ·
+<a href="#architecture"><b>Architecture</b></a> ·
+<a href="#api"><b>API</b></a> ·
+<a href="#configuration"><b>Configuration</b></a> ·
+<a href="#status"><b>Status</b></a> ·
+<a href="CONTRIBUTING.md"><b>Contributing</b></a>
 
-> **Pre-1.0 and under active development.** Interfaces and configuration may
-> change between minor versions. See [Status](#status) for what is and is not
-> built yet.
+</div>
 
-[Install](#install) · [Quick start](#quick-start) · [Architecture](#architecture) · [The agent](#the-agent) · [CLI](#cli) · [API](#api) · [Configuration](#configuration) · [Development](#development) · [Status](#status) · [Contributing](#contributing)
+---
+
+## Why
+
+Picking an inference engine is usually done once, by feel, and never revisited. The honest answer is that it depends on your model, your hardware and the shape of your traffic — and the only way to know is to measure. InferBolt makes that measurement cheap enough to repeat:
+
+- **One command to a real number.** `inferbolt run` starts the stack, provisions a credential, spawns a worker and prints results. No YAML, no manual setup.
+- **Configurations you can actually compare.** Model, GPU profile and workload are pinned; only the engine config varies. A trial is meaningless otherwise.
+- **An agent that searches for you.** Give it a goal in plain language and a budget. It plans the trials, reads the measurements back, and recommends a config citing the runs that support it.
+- **Regressions that find you.** Baselines per engine and model, with drift detection and Slack alerts when a number moves.
+
+> [!NOTE]
+> **Pre-1.0 and under active development.** Interfaces and configuration may change between minor versions. [Status](#status) is an honest account of what is and is not built.
+
+### What it measures
+
+Every benchmark run records seven metrics per engine, stored in a TimescaleDB hypertable and queryable over time:
+
+| Metric | Unit | What it tells you |
+|---|---|---|
+| **TTFT** | ms | Time to first token — the number your users feel |
+| **ITL** | ms | Inter-token latency — how smoothly output streams |
+| **Throughput** | tok/s | Aggregate tokens per second under load |
+| **KV cache hit rate** | 0–1 | How well prefix reuse is working |
+| **GPU memory** | MB | Headroom before you can raise batch size |
+| **Error rate** | 0–1 | Requests that failed under the tested concurrency |
+| **Cost** | $/Mtok | Cost per million tokens, from the GPU price model |
+
+### Supported engines
+
+| Engine | Adapter | Notes |
+|---|---|---|
+| **vLLM** | `worker/engines/vllm_engine.py` | Quantization, tensor parallel, max model len, GPU memory fraction |
+| **SGLang** | `worker/engines/sglang_engine.py` | RadixAttention; wins on shared prefixes |
+| **llama.cpp** | `worker/engines/llamacpp_engine.py` | CPU and small-GPU deployments |
+| **Ollama** | `worker/engines/ollama_engine.py` | Local development |
+| **mock** | `worker/engines/mock_engine.py` | No GPU required — exercises the full loop for CI and demos |
+
+Tunable per trial: `quantization` (`fp8` · `int8` · `int4` · `gptq` · `awq`), `tensor_parallel` (1–8), `max_batch_size` (1–4096), `max_model_len`, `gpu_memory_utilization`.
 
 ---
 
@@ -46,16 +97,27 @@ there are no pre-published server images yet.
 
 ## Quick start
 
-```bash
-go build -o inferbolt ./cmd/inferbolt
+**No GPU required.** The `mock` engine exercises the entire pipeline, so you can see a result in one command:
 
-# One command: starts the stack, spawns a worker, runs a benchmark, prints results.
-./inferbolt run --model my-model --engines mock --gpu cpu
+```bash
+inferbolt run --model my-model --engines mock --gpu cpu
 ```
 
-`run` brings up the backing services with `docker compose` if they aren't already up, bootstraps a local dev API key on first use, spawns a Python worker for the requested GPU profile if none is registered, submits the job, and prints the results. It needs Docker running and either `uv` or `python` on `PATH` with the worker's dependencies installed (`cd worker && uv sync`, or `pip install -e .` from the repo root).
+That single command starts the backing services with `docker compose` if they aren't already up, bootstraps a local dev API key on first use, spawns a Python worker for the requested GPU profile if none is registered, submits the job, and prints the results.
 
-`--engines mock --gpu cpu` needs no GPU and no model server. Swap in `--engines vllm --gpu a100-80gb` once you have real inference hardware.
+Once you have inference hardware, the only thing that changes is two flags:
+
+```bash
+inferbolt run --model meta-llama/Llama-3.1-8B --engines vllm,sglang --gpu a100-80gb
+```
+
+<table>
+<tr><th align="left">You need</th><th align="left">For</th></tr>
+<tr><td>Docker + Compose</td><td>Postgres/TimescaleDB, gateway, orchestrator, router, collector</td></tr>
+<tr><td>Python 3.11+</td><td>The benchmark worker — <code>uv sync</code> in <code>worker/</code>, or <code>pip install -e .</code> from the root</td></tr>
+<tr><td>A GPU</td><td>Only for real engines. <code>--engines mock --gpu cpu</code> needs none</td></tr>
+<tr><td><code>ANTHROPIC_API_KEY</code></td><td>Only for <code>inferbolt agent</code>. Plain benchmarks never call it</td></tr>
+</table>
 
 ### Let the agent find the configuration
 
@@ -374,9 +436,21 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the conventions review enforces.
 
 ## Status
 
-Working: gateway with JWT-scope auth and boundary validation, orchestrator with River dispatch and worker registry, five Python engine adapters, TimescaleDB metrics, drift detection with Slack alerts, the read-only dashboard, `inferbolt run`, and durable server-side optimization campaigns.
+Pre-1.0. This section is deliberately honest — it is easier to trust a project that says what it has not finished.
 
-Not yet built:
+**Working today**
+
+| | |
+|---|---|
+| ✅ **Gateway** | JWT-scope auth, per-tenant rate limiting, boundary validation |
+| ✅ **Orchestrator** | River durable queue, worker registry, dispatch, result ingestion |
+| ✅ **Engine adapters** | vLLM, SGLang, llama.cpp, Ollama, mock |
+| ✅ **Metrics** | TimescaleDB hypertable, queryable history |
+| ✅ **Drift detection** | Per-engine/model baselines, Slack alerts |
+| ✅ **`inferbolt run`** | One-command benchmark with no manual setup |
+| ✅ **Optimization agent** | Durable server-side campaigns, replayable and cancellable |
+
+**Known gaps**
 
 - **Cost model** — `worker/cost/modeler.py` computes cost per million tokens from a hardcoded GPU price table. `cost/` at the repo root is an empty scaffold.
 - **Optuna config sweep** — `worker/search/config_search.py` implements a TPE sweep with a Pareto frontier but is not wired to any caller. The agent covers the same ground with a different strategy; whether the deterministic sweep becomes a second campaign mode is undecided.
