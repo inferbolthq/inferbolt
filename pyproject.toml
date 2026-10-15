@@ -10,7 +10,7 @@ dependencies = [
     "optuna>=3.6.0",
     "numpy>=1.26.0",
     "opentelemetry-sdk>=1.24.0",
-    "opentelemetry-exporter-otlp>=1.24.0",
+    "opentelemetry-exporter-otlp>=1.44.0",
     "opentelemetry-instrumentation-fastapi>=0.45b0",
 ]
 
